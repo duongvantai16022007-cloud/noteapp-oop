@@ -1,16 +1,24 @@
 import sqlite3
-"""
 
-"""
 class DatabaseManager:
+    """
+    Singleton DatabaseManager quản lý kết nối SQLite duy nhất
+    trong suốt vòng đời của ứng dụng.
+    """
     _instance = None
 
     def __new__(cls, *args, **kwargs):
+        """
+        Tạo hoặc trả về thể hiện duy nhất của DatabaseManager.
+        """
         if cls._instance is None:
             cls._instance = super(DatabaseManager, cls).__new__(cls)
         return cls._instance
      
     def __init__(self, db_path = "notes.db"):
+        """
+        Khởi tạo kết nối đến database và tạo các bảng cần thiết.
+        """
         if not hasattr(self, 'connection'):
             self.connection = sqlite3.connect(db_path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
@@ -18,6 +26,9 @@ class DatabaseManager:
         pass
 
     def _create_tables(self):
+        """
+        Tạo các bảng mặc định nếu chúng chưa tồn tại.
+        """
         cursor = self.connection.cursor()
 
         cursor.execute('''

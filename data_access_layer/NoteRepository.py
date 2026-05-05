@@ -1,9 +1,15 @@
 import json
 from DatabaseManager import DatabaseManager
 
-
 class NoteRepository:
+    """
+    Repository cho phép thực hiện các thao tác CRUD lên Database,
+    tách biệt logic SQL khỏi UI và Models.
+    """
     def __init__(self):
+        """
+        Khởi tạo NoteRepository và lấy kết nối từ DatabaseManager.
+        """
         self.db = DatabaseManager()
     
     def create_note(self, note):

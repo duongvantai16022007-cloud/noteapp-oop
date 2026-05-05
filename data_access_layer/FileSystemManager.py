@@ -9,6 +9,10 @@ class FileSystemManager:
     để ứng dụng có thể chạy mượt mà trên nhiều hệ điều hành khác nhau.
     """
     def __init__(self):
+        """
+        Khởi tạo FileSystemManager, xác định hệ điều hành 
+        và tạo thư mục media nội bộ nếu chưa có.
+        """
         self.app_dir = self._get_app_storage_path()
 
         self.media_dir = os.path.join(self.app_dir, 'media')
