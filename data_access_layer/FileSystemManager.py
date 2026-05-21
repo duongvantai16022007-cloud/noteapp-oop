@@ -58,6 +58,25 @@ class FileSystemManager:
         """
         if not relative_path:
             return None
-        return os.path.join(self.app_dir, relative_path)
+        # If an absolute path was stored in DB, accept it but ensure it's
+        # contained within the application's storage directory. On Windows
+        # comparing paths on different drives raises ValueError; handle that.
+        absolute_path = relative_path
+        if not os.path.isabs(relative_path):
+            absolute_path = os.path.normpath(os.path.join(self.app_dir, relative_path))
+        else:
+            absolute_path = os.path.normpath(relative_path)
+
+        app_dir = os.path.normpath(self.app_dir)
+        try:
+            common = os.path.commonpath([app_dir, absolute_path])
+            if common != app_dir:
+                raise ValueError(f"Đường dẫn vượt ra ngoài thư mục ứng dụng: {relative_path}")
+        except ValueError:
+            # os.path.commonpath can raise on different-drive paths on Windows.
+            # If drives differ, treat as outside the app.
+            raise ValueError(f"Đường dẫn vượt ra ngoài thư mục ứng dụng hoặc khác ổ đĩa: {relative_path}")
+
+        return absolute_path
 
         

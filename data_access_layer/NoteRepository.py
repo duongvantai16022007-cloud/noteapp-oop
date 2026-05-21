@@ -1,4 +1,6 @@
 import json
+import uuid
+import datetime
 from DatabaseManager import DatabaseManager
 
 class NoteRepository:
@@ -16,23 +18,32 @@ class NoteRepository:
         """
         Nhận vào 1 ghi chú (dictionary hoặc object) và lưu vào SQLite.
         """
+        # Provide sensible defaults for missing fields (id, created_at).
+        note_id = note.get('id') or str(uuid.uuid4())
+        created_at = note.get('created_at') or datetime.datetime.utcnow().isoformat()
+
+        # Ensure media_path is persisted when creating media notes.
         query = '''
-                INSERT INTO notes (id, type, title, content, tags, created_at, folder_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO notes (id, type, title, content, media_path, tags, created_at, folder_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 '''
         tags_json = json.dumps(note.get('tags', []))
 
         params = (
-            note.get('id'),
+            note_id,
             note.get('type', 'text'),
             note.get('title', ''),
             note.get('content', ''),
+            note.get('media_path', None),
             tags_json,
-            note.get('created_at'),
+            created_at,
             note.get('folder_id', None)
         )
-        
+
         self.db.execute_query(query, params)
+
+        # Return the id so callers can continue using it.
+        return note_id
     
     def get_note(self, note_id):
         """
@@ -73,13 +84,12 @@ class NoteRepository:
                 SET title = ?, content = ?, media_path = ?, tags = ?, folder_id = ? 
                 WHERE id = ?
                 '''
-        
         tags_json = json.dumps(note.get('tags', []))
 
         params = (
             note.get('title'),
             note.get('content'),
-            note.get('media_path'),
+            note.get('media_path', None),
             tags_json,
             note.get('folder_id'),
             note.get('id'),
