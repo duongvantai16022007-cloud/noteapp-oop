@@ -1,10 +1,31 @@
 from .basenote import base
 
 class MediaNote(base):
-    """Lớp quản lý ghi chú có đính kèm file (ảnh/âm thanh)."""
-
-    def __init__(self, title, content, file_path, file_type, tags=None):
-        super().__init__(title, content, tags)
+    def __init__(
+        self,
+        title,
+        content="",
+        file_path=None,
+        file_type="media",
+        tags=None,
+        reminder_at=None,
+        deadline_at=None,
+        is_locked=False,
+        password_hash=None,
+        password_salt=None,
+        reminder_notified=0
+    ):
+        super().__init__(
+            title,
+            content,
+            tags,
+            reminder_at=reminder_at,
+            deadline_at=deadline_at,
+            is_locked=is_locked,
+            password_hash=password_hash,
+            password_salt=password_salt,
+            reminder_notified=reminder_notified
+        )
         self._file_path = file_path
         self._file_type = file_type
 
@@ -16,14 +37,10 @@ class MediaNote(base):
         return "Media"
 
     def to_dict(self):
-        return {
-            "id": self._id,
+        data = self._base_dict()
+        data.update({
             "type": self.get_type(),
-            "title": self._title,
             "content": self._content,
-            "file_path": self._file_path,
-            "file_type": self._file_type,
-            "tags": self._tags,
-            "created_at": self._created.isoformat(),
-            "updated_at": self._updated.isoformat()
-        }
+            "media_path": self._file_path
+        })
+        return data

@@ -23,7 +23,7 @@ class DatabaseManager:
         cls._instance = inst
         return inst
 
-    def __init__(self, db_path = "notes.db"):
+    def __init__(self, db_path="notes.db"):
         if getattr(self, '_initialized', False):
             if not hasattr(self, '_lock'):
                 self._lock = threading.RLock()
@@ -52,27 +52,51 @@ class DatabaseManager:
             self._create_tables()
 
         self._initialized = True
+
     def _create_tables(self):
         """
-        Tạo các bảng mặc định nếu chúng chưa tồn tại.
+        Tạo bảng mặc định và tự migrate các cột mới nếu database cũ đã tồn tại.
         """
         cursor = self.connection.cursor()
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS notes (
                 id TEXT PRIMARY KEY,
-                type TEXT NOT NULL,         -- 'text', 'checklist', or 'media'
+                type TEXT NOT NULL,          -- 'Text', 'Checklist', hoặc 'Media'
                 title TEXT,
-                content TEXT,               -- Holds text, or checklist JSON
-                media_path TEXT,            -- Holds the file path for MediaNotes
-                tags TEXT,                  -- Can store tags as a JSON string
+                content TEXT,                -- Text thuần/Markdown, hoặc Checklist JSON
+                media_path TEXT,
+                tags TEXT,
                 created_at TEXT,
                 updated_at TEXT,
-                folder_id TEXT              -- For your Folder Composite Pattern
+                folder_id TEXT
+            )
+        ''')
+
+        # Các cột bổ sung cho bảo mật, reminder/deadline.
+        self._add_column_if_not_exists("notes", "is_locked", "INTEGER DEFAULT 0")
+        self._add_column_if_not_exists("notes", "password_hash", "TEXT")
+        self._add_column_if_not_exists("notes", "password_salt", "TEXT")
+        self._add_column_if_not_exists("notes", "reminder_at", "TEXT")
+        self._add_column_if_not_exists("notes", "deadline_at", "TEXT")
+        self._add_column_if_not_exists("notes", "reminder_notified", "INTEGER DEFAULT 0")
+
+        # Lưu cấu hình UI như theme sáng/tối, màu chủ đạo.
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
             )
         ''')
 
         self.connection.commit()
+
+    def _add_column_if_not_exists(self, table_name, column_name, column_def):
+        cursor = self.connection.cursor()
+        cursor.execute(f"PRAGMA table_info({table_name})")
+        existing_columns = [row[1] for row in cursor.fetchall()]
+        if column_name not in existing_columns:
+            cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
 
     def execute_query(self, query, params=()):
         """
