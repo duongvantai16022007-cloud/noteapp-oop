@@ -69,7 +69,8 @@ class DatabaseManager:
                 tags TEXT,
                 created_at TEXT,
                 updated_at TEXT,
-                folder_id TEXT
+                folder_id TEXT,
+                deleted_at TEXT
             )
         ''')
 
@@ -80,6 +81,8 @@ class DatabaseManager:
         self._add_column_if_not_exists("notes", "reminder_at", "TEXT")
         self._add_column_if_not_exists("notes", "deadline_at", "TEXT")
         self._add_column_if_not_exists("notes", "reminder_notified", "INTEGER DEFAULT 0")
+        self._add_column_if_not_exists("notes", "deadline_notified", "INTEGER DEFAULT 0")
+        self._add_column_if_not_exists("notes", "deleted_at", "TEXT")
 
         # Lưu cấu hình UI như theme sáng/tối, màu chủ đạo.
         cursor.execute('''

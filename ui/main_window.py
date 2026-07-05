@@ -5,8 +5,7 @@ import calendar
 
 from data.NoteRepository import NoteRepository
 from model.note_factory import NoteFactory
-from commands.command_history import CommandHistory
-from commands.note_commands import AddCommand, EditCommand, DeleteCommand
+from commands.note_commands import AddCommand, EditCommand
 from services.export_service import ExportService
 from services.security_service import SecurityManager
 from services.reminder_service import ReminderService
@@ -14,27 +13,56 @@ from services.settings_service import SettingsService
 
 from ui.sidebar import SidebarFrame
 from ui.editor import EditorFrame
+from ui.calendar_view import CTkCalendarView
 
 class MainWindow(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.repo = NoteRepository()
-        self.history = CommandHistory()
         self.export_service = ExportService()
         self.security_manager = SecurityManager()
         self.settings_service = SettingsService()
         self.settings = self.settings_service.get_all()
         self.current_note = None
         self.calendar_month = datetime.date.today().replace(day=1)
+        self._ui_built = False
 
         self.title("Engraver Note App - Full Features")
         self.geometry("1200x760")
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
+        # Apply settings initially
+        initial_appearance = self.settings.get("appearance_mode", "System")
+        initial_color = self.settings.get("color_theme", "blue")
+        ctk.set_appearance_mode(initial_appearance)
+        ctk.set_default_color_theme(initial_color.lower().replace(" ", "-"))
+        from services.theme_service import ThemeManager
+        ThemeManager.set_active_theme(initial_color)
+
+        self._build_ui()
+
+        # Reminder chạy nền, callback đưa thông báo về main thread bằng self.after.
+        self.reminder_service = ReminderService(self.repo, callback=self.handle_reminder_due, interval=10)
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        self.refresh_sidebar()
+        self.prepare_new("Text")
+
+    # =========================
+    # Helpers
+    # =========================
+    def _build_ui(self, restore_note_id=None):
+        if getattr(self, "sidebar", None):
+            self.sidebar.destroy()
+        if getattr(self, "editor", None):
+            self.editor.destroy()
+
         self.sidebar = SidebarFrame(
             self,
             on_note_select=self.load_note,
+            on_restore_deleted=self.restore_deleted_note,
+            on_permanently_delete=self.permanently_delete_note,
             on_new_text_note=lambda: self.prepare_new("Text"),
             on_new_checklist=lambda: self.prepare_new("Checklist"),
             on_search=self.handle_search,
@@ -56,18 +84,17 @@ class MainWindow(ctk.CTk):
         )
         self.editor.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
 
-        # Reminder chạy nền, callback đưa thông báo về main thread bằng self.after.
-        self.reminder_service = ReminderService(self.repo, callback=self.handle_reminder_due, interval=10)
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
-
+        self._ui_built = True
         self.refresh_sidebar()
-        self.prepare_new("Text")
+        if restore_note_id:
+            self.load_note(restore_note_id)
+        else:
+            self.prepare_new("Text")
 
-    # =========================
-    # Helpers
-    # =========================
     def refresh_sidebar(self):
+        self.repo.purge_expired_deleted_notes(days=30)
         self.sidebar.update_list(self.repo.get_all_notes())
+        self.sidebar.update_deleted_list(self.repo.get_deleted_notes())
 
     def _parse_datetime_input(self, value):
         """Nhận định dạng YYYY-MM-DD HH:MM hoặc ISO; trả ISO string/None."""
@@ -102,11 +129,28 @@ class MainWindow(ctk.CTk):
         old_reminder = getattr(self.current_note, "reminder_at", None) if self.current_note else None
         reminder_notified = 0 if reminder_at != old_reminder else getattr(self.current_note, "reminder_notified", 0)
 
+        old_deadline = getattr(self.current_note, "deadline_at", None) if self.current_note else None
+        deadline_notified = 0 if deadline_at != old_deadline else getattr(self.current_note, "deadline_notified", 0)
+
         return {
             "reminder_at": reminder_at,
             "deadline_at": deadline_at,
-            "reminder_notified": reminder_notified
+            "reminder_notified": reminder_notified,
+            "deadline_notified": deadline_notified
         }
+
+    def _content_to_plain_text(self, content):
+        if isinstance(content, dict):
+            return str(content.get("text", ""))
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    parts.append(str(item.get("content", "")))
+                else:
+                    parts.append(str(getattr(item, "content", item)))
+            return " ".join(parts)
+        return str(content or "")
 
     # =========================
     # CRUD Note
@@ -168,7 +212,7 @@ class MainWindow(ctk.CTk):
                 new_note_obj = NoteFactory.from_dict(raw_data)
 
                 command = AddCommand(new_note_obj, self.repo)
-                self.history.execute_command(command)
+                command.execute()
                 self.current_note = new_note_obj
             else:
                 command = EditCommand(
@@ -178,7 +222,7 @@ class MainWindow(ctk.CTk):
                     new_content=data["content"],
                     new_extra=extra
                 )
-                self.history.execute_command(command)
+                command.execute()
         except ValueError as exc:
             return messagebox.showwarning("Lỗi", str(exc))
 
@@ -189,22 +233,25 @@ class MainWindow(ctk.CTk):
 
     def delete_note(self):
         if self.current_note and messagebox.askyesno("Xác nhận", "Xóa ghi chú?"):
-            command = DeleteCommand(self.current_note.id, self.repo)
-            self.history.execute_command(command)
+            self.repo.delete_note(self.current_note.id)
             self.prepare_new("Text")
             self.refresh_sidebar()
 
     def handle_undo(self):
-        self.history.undo()
-        self.refresh_sidebar()
-        if self.current_note:
-            self.load_note(self.current_note.id)
+        self.editor.undo_text()
 
     def handle_redo(self):
-        self.history.redo()
+        self.editor.redo_text()
+
+    def restore_deleted_note(self, note_id):
+        self.repo.restore_deleted_note(note_id)
         self.refresh_sidebar()
-        if self.current_note:
-            self.load_note(self.current_note.id)
+        self.load_note(note_id)
+
+    def permanently_delete_note(self, note_id):
+        if messagebox.askyesno("Xác nhận", "Xóa vĩnh viễn ghi chú này? Không thể khôi phục lại."):
+            self.repo.permanently_delete_note(note_id)
+            self.refresh_sidebar()
 
     def handle_search(self, event=None):
         keyword = self.sidebar.search_entry.get().strip().lower()
@@ -212,7 +259,7 @@ class MainWindow(ctk.CTk):
         for note in self.repo.get_all_notes():
             title_match = keyword in note.get('title', '').lower()
             # Ghi chú đã khóa không bị search theo content để tránh đọc thuộc tính bên trong khi chưa nhập pass.
-            content_match = False if note.get("is_locked") else keyword in str(note.get('content', '')).lower()
+            content_match = False if note.get("is_locked") else keyword in self._content_to_plain_text(note.get('content', '')).lower()
             if title_match or content_match:
                 notes.append(note)
         self.sidebar.update_list(notes)
@@ -262,12 +309,15 @@ class MainWindow(ctk.CTk):
     # =========================
     # Reminder + Calendar
     # =========================
-    def handle_reminder_due(self, note_dict):
+    def handle_reminder_due(self, note_dict, is_deadline=False):
         def show_notification():
-            messagebox.showinfo(
-                "🔔 Nhắc nhở ghi chú",
-                f"Đã đến giờ nhắc cho ghi chú: {note_dict.get('title', 'Không có tiêu đề')}"
+            title = "📌 Hạn chót ghi chú" if is_deadline else "🔔 Nhắc nhở ghi chú"
+            msg = (
+                f"Đã đến hạn chót (deadline) cho ghi chú: {note_dict.get('title', 'Không có tiêu đề')}"
+                if is_deadline
+                else f"Đã đến giờ nhắc cho ghi chú: {note_dict.get('title', 'Không có tiêu đề')}"
             )
+            messagebox.showinfo(title, msg)
             self.refresh_sidebar()
         self.after(0, show_notification)
 
@@ -279,113 +329,37 @@ class MainWindow(ctk.CTk):
         except ValueError:
             return None
 
-    def _change_calendar_month(self, delta, window, grid_frame, title_label):
-        year = self.calendar_month.year
-        month = self.calendar_month.month + delta
-        if month < 1:
-            month = 12
-            year -= 1
-        elif month > 12:
-            month = 1
-            year += 1
-        self.calendar_month = datetime.date(year, month, 1)
-        self._draw_calendar(window, grid_frame, title_label)
-
     def open_calendar_view(self):
-        window = ctk.CTkToplevel(self)
-        window.title("📅 Calendar View - Lịch biểu ghi chú")
-        window.geometry("950x650")
-        window.transient(self)
-        window.grab_set()
-
-        header = ctk.CTkFrame(window, fg_color="transparent")
-        header.pack(fill="x", padx=15, pady=(15, 8))
-        title_label = ctk.CTkLabel(header, text="", font=ctk.CTkFont(size=20, weight="bold"))
-        title_label.pack(side="left", expand=True)
-        ctk.CTkButton(header, text="← Tháng trước", width=120, command=lambda: self._change_calendar_month(-1, window, grid_frame, title_label)).pack(side="left", padx=5)
-        ctk.CTkButton(header, text="Tháng sau →", width=120, command=lambda: self._change_calendar_month(1, window, grid_frame, title_label)).pack(side="left", padx=5)
-
-        note = ctk.CTkLabel(
-            window,
-            text="🔔 = Reminder, 📌 = Deadline. Bấm vào ghi chú trong lịch để mở.",
-            text_color=("gray35", "gray75")
-        )
-        note.pack(fill="x", padx=15, pady=(0, 8))
-
-        grid_frame = ctk.CTkFrame(window)
-        grid_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
-        self._draw_calendar(window, grid_frame, title_label)
-
-    def _draw_calendar(self, window, grid_frame, title_label):
-        for widget in grid_frame.winfo_children():
-            widget.destroy()
-
-        for col in range(7):
-            grid_frame.grid_columnconfigure(col, weight=1, uniform="calendar")
-        for row in range(7):
-            grid_frame.grid_rowconfigure(row, weight=1, uniform="calendar")
-
-        title_label.configure(text=f"Tháng {self.calendar_month.month:02d}/{self.calendar_month.year}")
-
-        weekdays = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
-        for col, day_name in enumerate(weekdays):
-            ctk.CTkLabel(grid_frame, text=day_name, font=ctk.CTkFont(weight="bold")).grid(
-                row=0, column=col, padx=3, pady=3, sticky="nsew"
-            )
-
-        events_by_date = {}
-        for note in self.repo.get_timed_notes():
-            for field, icon in (("reminder_at", "🔔"), ("deadline_at", "📌")):
-                date_value = self._date_from_iso(note.get(field))
-                if date_value and date_value.year == self.calendar_month.year and date_value.month == self.calendar_month.month:
-                    events_by_date.setdefault(date_value, []).append((icon, note))
-
-        month_matrix = calendar.Calendar(firstweekday=0).monthdatescalendar(self.calendar_month.year, self.calendar_month.month)
-        for week_index, week in enumerate(month_matrix, start=1):
-            for col, day in enumerate(week):
-                cell = ctk.CTkFrame(grid_frame, border_width=1)
-                cell.grid(row=week_index, column=col, padx=3, pady=3, sticky="nsew")
-                cell.grid_columnconfigure(0, weight=1)
-
-                is_current_month = day.month == self.calendar_month.month
-                day_color = ("gray10", "gray90") if is_current_month else ("gray55", "gray45")
-                ctk.CTkLabel(cell, text=str(day.day), anchor="w", text_color=day_color).pack(fill="x", padx=6, pady=(4, 1))
-
-                for icon, note in events_by_date.get(day, [])[:3]:
-                    title = note.get("title", "Không có tiêu đề")
-                    if len(title) > 13:
-                        title = title[:13] + "…"
-                    ctk.CTkButton(
-                        cell,
-                        text=f"{icon} {title}",
-                        height=24,
-                        anchor="w",
-                        command=lambda note_id=note["id"], win=window: self._open_note_from_calendar(note_id, win)
-                    ).pack(fill="x", padx=4, pady=1)
-
-                extra_count = max(0, len(events_by_date.get(day, [])) - 3)
-                if extra_count:
-                    ctk.CTkLabel(cell, text=f"+{extra_count} mục khác", text_color=("gray40", "gray70")).pack(fill="x", padx=6)
-
-    def _open_note_from_calendar(self, note_id, window):
-        window.destroy()
-        self.load_note(note_id)
+        CTkCalendarView(self, repo=self.repo, on_open_note=self.load_note)
 
     # =========================
     # Theme
     # =========================
     def handle_theme_change(self, key, value):
+        try:
+            self.wm_attributes("-alpha", 0)
+        except Exception:
+            pass
+
         self.settings_service.set_setting(key, value)
         self.settings[key] = value
+
+        restore_note_id = self.current_note.id if self.current_note else None
 
         if key == "appearance_mode":
             ctk.set_appearance_mode(value)
         elif key == "color_theme":
-            ctk.set_default_color_theme(value)
-            messagebox.showinfo(
-                "Đã đổi màu chủ đạo",
-                "Một số widget hiện tại sẽ đổi ngay; để đồng bộ toàn bộ màu chủ đạo, hãy tắt và mở lại ứng dụng."
-            )
+            ctk.set_default_color_theme(value.lower().replace(" ", "-"))
+            from services.theme_service import ThemeManager
+            ThemeManager.set_active_theme(value)
+
+        self._build_ui(restore_note_id=restore_note_id)
+
+        self.update_idletasks()
+        try:
+            self.wm_attributes("-alpha", 1)
+        except Exception:
+            pass
 
     # =========================
     # Export
@@ -410,6 +384,4 @@ class MainWindow(ctk.CTk):
                 messagebox.showerror("Lỗi PDF", f"Không xuất được PDF: {e}")
 
     def on_close(self):
-        if hasattr(self, "reminder_service"):
-            self.reminder_service.stop()
-        self.destroy()
+        self.iconify()

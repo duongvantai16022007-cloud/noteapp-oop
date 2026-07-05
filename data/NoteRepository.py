@@ -27,6 +27,7 @@ class NoteRepository:
         # SQLite trả 0/1, chuyển về bool để UI/model dễ dùng.
         note_dict['is_locked'] = bool(note_dict.get('is_locked', 0))
         note_dict['reminder_notified'] = int(note_dict.get('reminder_notified') or 0)
+        note_dict['deadline_notified'] = int(note_dict.get('deadline_notified') or 0)
         return note_dict
 
     def create_note(self, note):
@@ -40,9 +41,9 @@ class NoteRepository:
         query = '''
                 INSERT INTO notes (
                     id, type, title, content, media_path, tags, created_at, updated_at, folder_id,
-                    is_locked, password_hash, password_salt, reminder_at, deadline_at, reminder_notified
+                    is_locked, password_hash, password_salt, reminder_at, deadline_at, reminder_notified, deadline_notified, deleted_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 '''
 
         params = (
@@ -60,7 +61,9 @@ class NoteRepository:
             note.get('password_salt'),
             note.get('reminder_at') or None,
             note.get('deadline_at') or None,
-            int(note.get('reminder_notified') or 0)
+            int(note.get('reminder_notified') or 0),
+            int(note.get('deadline_notified') or 0),
+            note.get('deleted_at') or None,
         )
 
         self.db.execute_query(query, params)
@@ -74,7 +77,7 @@ class NoteRepository:
         return None
 
     def get_all_notes(self):
-        query = "SELECT * FROM notes ORDER BY updated_at DESC"
+        query = "SELECT * FROM notes WHERE (deleted_at IS NULL OR deleted_at = '') ORDER BY updated_at DESC"
         rows = self.db.fetch_all(query)
         return [self._row_to_note_dict(row) for row in rows]
 
@@ -88,7 +91,7 @@ class NoteRepository:
                 UPDATE notes
                 SET title = ?, content = ?, media_path = ?, tags = ?, folder_id = ?, updated_at = ?,
                     is_locked = ?, password_hash = ?, password_salt = ?,
-                    reminder_at = ?, deadline_at = ?, reminder_notified = ?
+                    reminder_at = ?, deadline_at = ?, reminder_notified = ?, deadline_notified = ?
                 WHERE id = ?
                 '''
 
@@ -105,6 +108,7 @@ class NoteRepository:
             note.get('reminder_at') or None,
             note.get('deadline_at') or None,
             int(note.get('reminder_notified') or 0),
+            int(note.get('deadline_notified') or 0),
             note.get('id'),
         )
 
@@ -128,14 +132,32 @@ class NoteRepository:
         query = "UPDATE notes SET reminder_notified = 1 WHERE id = ?"
         self.db.execute_query(query, (note_id,))
 
+    def mark_deadline_notified(self, note_id):
+        query = "UPDATE notes SET deadline_notified = 1 WHERE id = ?"
+        self.db.execute_query(query, (note_id,))
+
     def get_due_reminders(self, current_iso):
         query = '''
             SELECT * FROM notes
             WHERE reminder_at IS NOT NULL
               AND reminder_at != ''
               AND reminder_notified = 0
+              AND (deleted_at IS NULL OR deleted_at = '')
               AND reminder_at <= ?
             ORDER BY reminder_at ASC
+        '''
+        rows = self.db.fetch_all(query, (current_iso,))
+        return [self._row_to_note_dict(row) for row in rows]
+
+    def get_due_deadlines(self, current_iso):
+        query = '''
+            SELECT * FROM notes
+            WHERE deadline_at IS NOT NULL
+              AND deadline_at != ''
+              AND deadline_notified = 0
+              AND (deleted_at IS NULL OR deleted_at = '')
+              AND deadline_at <= ?
+            ORDER BY deadline_at ASC
         '''
         rows = self.db.fetch_all(query, (current_iso,))
         return [self._row_to_note_dict(row) for row in rows]
@@ -143,13 +165,44 @@ class NoteRepository:
     def get_timed_notes(self):
         query = '''
             SELECT * FROM notes
-            WHERE (reminder_at IS NOT NULL AND reminder_at != '')
-               OR (deadline_at IS NOT NULL AND deadline_at != '')
+            WHERE ((reminder_at IS NOT NULL AND reminder_at != '')
+               OR (deadline_at IS NOT NULL AND deadline_at != ''))
+               AND (deleted_at IS NULL OR deleted_at = '')
             ORDER BY COALESCE(deadline_at, reminder_at) ASC
         '''
         rows = self.db.fetch_all(query)
         return [self._row_to_note_dict(row) for row in rows]
 
     def delete_note(self, note_id):
+        deleted_at = datetime.datetime.now().replace(microsecond=0).isoformat()
+        query = "UPDATE notes SET deleted_at = ?, updated_at = ? WHERE id = ?"
+        self.db.execute_query(query, (deleted_at, deleted_at, note_id))
+
+    def restore_deleted_note(self, note_id):
+        updated_at = datetime.datetime.now().replace(microsecond=0).isoformat()
+        query = "UPDATE notes SET deleted_at = NULL, updated_at = ? WHERE id = ?"
+        self.db.execute_query(query, (updated_at, note_id))
+
+    def permanently_delete_note(self, note_id):
         query = "DELETE FROM notes WHERE id = ?"
-        self.db.execute_query(query, (note_id, ))
+        self.db.execute_query(query, (note_id,))
+
+    def get_deleted_notes(self, limit=20):
+        query = '''
+            SELECT * FROM notes
+            WHERE deleted_at IS NOT NULL AND deleted_at != ''
+            ORDER BY deleted_at DESC
+            LIMIT ?
+        '''
+        rows = self.db.fetch_all(query, (limit,))
+        return [self._row_to_note_dict(row) for row in rows]
+
+    def purge_expired_deleted_notes(self, days=30):
+        cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).replace(microsecond=0).isoformat()
+        query = '''
+            DELETE FROM notes
+            WHERE deleted_at IS NOT NULL
+              AND deleted_at != ''
+              AND deleted_at <= ?
+        '''
+        self.db.execute_query(query, (cutoff,))

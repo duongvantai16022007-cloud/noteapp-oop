@@ -2,6 +2,11 @@ from fpdf import FPDF
 
 class ExportService:
 
+    def _plain_text_from_content(self, content):
+        if isinstance(content, dict):
+            return str(content.get("text", ""))
+        return str(content or "")
+
     def _content_to_text(self, note):
         content = note.content
         if isinstance(content, list):
@@ -14,7 +19,7 @@ class ExportService:
                     mark = "x" if getattr(item, "is_done", False) else " "
                     lines.append(f"- [{mark}] {getattr(item, 'content', str(item))}")
             return "\n".join(lines)
-        return str(content or "")
+            return self._plain_text_from_content(content)
 
     def export_to_markdown(self, note, file_path):
         with open(file_path, "w", encoding="utf-8") as f:

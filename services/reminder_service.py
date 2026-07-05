@@ -48,13 +48,30 @@ class ReminderService:
             return
 
         now_iso = datetime.datetime.now().replace(microsecond=0).isoformat()
+        
+        # Check reminders
         due_notes = self.repo.get_due_reminders(now_iso)
         for note in due_notes:
             self.repo.mark_reminder_notified(note["id"])
             if self.callback:
-                self.callback(note)
+                try:
+                    self.callback(note, is_deadline=False)
+                except TypeError:
+                    self.callback(note)
             else:
                 self.notify(f"{note.get('title', 'Ghi chú')} đã đến giờ nhắc!")
+
+        # Check deadlines
+        due_deadlines = self.repo.get_due_deadlines(now_iso)
+        for note in due_deadlines:
+            self.repo.mark_deadline_notified(note["id"])
+            if self.callback:
+                try:
+                    self.callback(note, is_deadline=True)
+                except TypeError:
+                    self.callback(note)
+            else:
+                self.notify(f"{note.get('title', 'Ghi chú')} đã đến deadline!")
 
     def notify(self, message):
         print(f"🔔 Reminder: {message}")

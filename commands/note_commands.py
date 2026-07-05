@@ -68,4 +68,8 @@ class DeleteCommand(Command):
 
     def undo(self) -> None:
         if self._backup_note_dict:
-            self._repo.create_note(self._backup_note_dict)
+            restore_note = getattr(self._repo, "restore_deleted_note", None)
+            if callable(restore_note):
+                restore_note(self._note_id)
+            else:
+                self._repo.create_note(self._backup_note_dict)

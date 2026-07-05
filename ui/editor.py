@@ -1,7 +1,11 @@
 import customtkinter as ctk
 import tkinter as tk
 import tkinter.font as tkfont
+from tkinter import ttk, messagebox, colorchooser
 from datetime import datetime
+from ui.date_picker import CTkDatePicker
+from ui.color_picker import CTkColorPicker
+from services.theme_service import ThemeManager
 
 class EditorFrame(ctk.CTkFrame):
     def __init__(
@@ -16,18 +20,26 @@ class EditorFrame(ctk.CTkFrame):
         on_lock_toggle
     ):
         super().__init__(master, fg_color="transparent")
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=1)
         self.grid_columnconfigure(0, weight=1)
+        self.grid_propagate(False)
 
         self.current_note_type = "Text"  # Mặc định là Text
         self.checklist_vars = []  # Lưu trạng thái các ô tick
+        self._undo_enabled = False
+        self._editor_default_height = 420
+        self._font_cache = {}
+        self.zoom_factor = 1.0
+        self._zoom_job = None
 
         # Toolbar: Chứa Export, Undo/Redo, định dạng cơ bản, khóa ghi chú.
         self.toolbar = ctk.CTkFrame(self, fg_color="transparent", height=40)
-        self.toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        self.toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
-        ctk.CTkButton(self.toolbar, text="⟲ Undo", width=70, command=on_undo).pack(side="left", padx=5)
-        ctk.CTkButton(self.toolbar, text="⟳ Redo", width=70, command=on_redo).pack(side="left", padx=5)
+        self.btn_undo = ctk.CTkButton(self.toolbar, text="⟲ Undo", width=70, command=on_undo)
+        self.btn_undo.pack(side="left", padx=5)
+        self.btn_redo = ctk.CTkButton(self.toolbar, text="⟳ Redo", width=70, command=on_redo)
+        self.btn_redo.pack(side="left", padx=5)
 
         self.btn_bold = ctk.CTkButton(
             self.toolbar,
@@ -53,6 +65,40 @@ class EditorFrame(ctk.CTkFrame):
         ctk.CTkButton(self.toolbar, text="⬇ Xuất Markdown", width=120, command=on_export_md).pack(side="right", padx=5)
         ctk.CTkButton(self.toolbar, text="⬇ Xuất PDF", width=100, command=on_export_pdf).pack(side="right", padx=5)
 
+        self.format_bar = ctk.CTkFrame(self, fg_color="transparent")
+        self.format_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        self.format_bar.grid_columnconfigure(7, weight=0)
+        self.format_bar.grid_columnconfigure(8, weight=1) # Empty space to absorb width
+
+        ctk.CTkLabel(self.format_bar, text="Font").grid(row=0, column=0, padx=(0, 6), sticky="w")
+        self.font_family_menu = ctk.CTkOptionMenu(
+            self.format_bar,
+            values=["Arial", "Helvetica", "Times New Roman", "Georgia", "Verdana", "Courier New"],
+            width=140,
+            command=self.apply_font_family
+        )
+        self.font_family_menu.set("Arial")
+        self.font_family_menu.grid(row=0, column=1, padx=(0, 10), sticky="w")
+
+        ctk.CTkLabel(self.format_bar, text="Size").grid(row=0, column=2, padx=(0, 6), sticky="w")
+        self.font_size_menu = ctk.CTkOptionMenu(
+            self.format_bar,
+            values=["10", "11", "12", "14", "16", "18", "20", "24", "28", "32"],
+            width=72,
+            command=self.apply_font_size
+        )
+        self.font_size_menu.set("15")
+        self.font_size_menu.grid(row=0, column=3, padx=(0, 10), sticky="w")
+
+        ctk.CTkButton(self.format_bar, text="Màu chữ", width=88, command=self.pick_text_color).grid(row=0, column=4, padx=(0, 8), sticky="w")
+        ctk.CTkButton(self.format_bar, text="Highlight", width=90, command=self.pick_highlight_color).grid(row=0, column=5, padx=(0, 8), sticky="w")
+
+        ctk.CTkLabel(self.format_bar, text="Zoom").grid(row=0, column=6, padx=(0, 6), sticky="w")
+        self.document_zoom_slider = ctk.CTkSlider(self.format_bar, from_=50, to=200, number_of_steps=30, width=130)
+        self.document_zoom_slider.set(100)
+        self.document_zoom_slider.grid(row=0, column=7, padx=(0, 8), sticky="w")
+        self.document_zoom_slider.bind("<ButtonRelease-1>", self.on_zoom_release)
+
         # Tiêu đề
         self.entry_title = ctk.CTkEntry(
             self,
@@ -61,37 +107,36 @@ class EditorFrame(ctk.CTkFrame):
             border_width=0,
             fg_color="transparent"
         )
-        self.entry_title.grid(row=1, column=0, columnspan=2, pady=(0, 10), sticky="ew")
+        self.entry_title.grid(row=2, column=0, columnspan=2, pady=(0, 10), sticky="ew")
 
         # Khung chứa nội dung động (swap giữa Textbox và Checklist)
         self.content_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.content_container.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(0, 10))
+        self.content_container.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(0, 10))
         self.content_container.grid_rowconfigure(0, weight=1)
         self.content_container.grid_columnconfigure(0, weight=1)
+        self.content_container.grid_propagate(False)
 
         # 1. UI cho Text Note
-        self.textbox_content = ctk.CTkTextbox(self.content_container, font=ctk.CTkFont(size=15), wrap="word")
-        self._configure_text_tags()
-        self.textbox_content.bind("<Control-b>", lambda event: self._shortcut_format(event, "bold"))
-        self.textbox_content.bind("<Control-i>", lambda event: self._shortcut_format(event, "italic"))
-        self._text_widget().bind("<Control-b>", lambda event: self._shortcut_format(event, "bold"))
-        self._text_widget().bind("<Control-i>", lambda event: self._shortcut_format(event, "italic"))
+        self._create_textbox_widget()
 
         # 2. UI cho Checklist Note - GIỮ NGUYÊN các ô checkbox như bản cũ
         self.checklist_frame = ctk.CTkScrollableFrame(self.content_container)
 
         # Metadata: reminder/deadline
         self.meta_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.meta_frame.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        self.meta_frame.grid_columnconfigure((1, 3), weight=1)
+        self.meta_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        self.meta_frame.grid_columnconfigure(0, weight=1) # Spacer column to push everything right
 
-        ctk.CTkLabel(self.meta_frame, text="🔔 Nhắc lúc").grid(row=0, column=0, padx=(0, 8), sticky="w")
-        self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM")
-        self.entry_reminder.grid(row=0, column=1, padx=(0, 15), sticky="ew")
+        ctk.CTkLabel(self.meta_frame, text="🔔 Nhắc lúc").grid(row=0, column=1, padx=(0, 8), sticky="e")
+        self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM", width=140)
+        self.entry_reminder.grid(row=0, column=2, padx=(0, 5), sticky="e")
+        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_reminder, "Chọn thời gian nhắc")).grid(row=0, column=3, padx=(0, 15), sticky="e")
 
-        ctk.CTkLabel(self.meta_frame, text="📌 Deadline").grid(row=0, column=2, padx=(0, 8), sticky="w")
-        self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM")
-        self.entry_deadline.grid(row=0, column=3, sticky="ew")
+        ctk.CTkLabel(self.meta_frame, text="📌 Deadline").grid(row=0, column=4, padx=(0, 8), sticky="e")
+        self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM", width=140)
+        self.entry_deadline.grid(row=0, column=5, padx=(0, 5), sticky="e")
+        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_deadline, "Chọn deadline")).grid(row=0, column=6, padx=(0, 0), sticky="e")
+        self.meta_frame.grid_columnconfigure((1, 6), weight=0)
 
         # Khung thêm item cho Checklist
         self.add_item_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -101,11 +146,35 @@ class EditorFrame(ctk.CTkFrame):
         self.new_item_entry.bind("<Return>", lambda event: self._add_checklist_item_from_enter(event))
 
         # Nút chức năng cuối
-        self.btn_delete = ctk.CTkButton(self, text="🗑 Xóa", fg_color="#ef4444", hover_color="#dc2626", command=on_delete)
-        self.btn_delete.grid(row=5, column=0, sticky="w")
+        self.btn_delete = ctk.CTkButton(self, text="🗑 Xóa", fg_color=ThemeManager.get("accent_danger"), hover_color=ThemeManager.get("accent_danger_hover"), command=on_delete)
+        self.btn_delete.grid(row=6, column=0, sticky="w")
 
         self.btn_save = ctk.CTkButton(self, text="💾 Lưu Ghi Chú", command=lambda: on_save(self.get_data(), self.current_note_type))
-        self.btn_save.grid(row=5, column=1, sticky="e")
+        self.btn_save.grid(row=6, column=1, sticky="e")
+
+    def _create_textbox_widget(self):
+        self.textbox_content = ctk.CTkTextbox(
+            self.content_container,
+            font=ctk.CTkFont(size=15),
+            wrap="word",
+            undo=True,
+            autoseparators=True,
+            maxundo=-1
+        )
+        self.textbox_content.configure(height=self._editor_default_height)
+        self._configure_text_tags()
+        self.textbox_content.bind("<Control-b>", lambda event: self._shortcut_format(event, "bold"))
+        self.textbox_content.bind("<Control-i>", lambda event: self._shortcut_format(event, "italic"))
+        self.textbox_content.bind("<Control-z>", lambda event: self.undo_text())
+        self.textbox_content.bind("<Control-y>", lambda event: self.redo_text())
+        self.textbox_content.bind("<Command-z>", lambda event: self.undo_text())
+        self.textbox_content.bind("<Command-Shift-z>", lambda event: self.redo_text())
+        self._text_widget().bind("<Control-b>", lambda event: self._shortcut_format(event, "bold"))
+        self._text_widget().bind("<Control-i>", lambda event: self._shortcut_format(event, "italic"))
+        self._text_widget().bind("<Control-z>", lambda event: self.undo_text())
+        self._text_widget().bind("<Control-y>", lambda event: self.redo_text())
+        self._text_widget().bind("<Command-z>", lambda event: self.undo_text())
+        self._text_widget().bind("<Command-Shift-z>", lambda event: self.redo_text())
 
     # =========================
     # Rich text cơ bản B/I
@@ -115,42 +184,99 @@ class EditorFrame(ctk.CTkFrame):
         return getattr(self.textbox_content, "_textbox", self.textbox_content)
 
     def _configure_text_tags(self):
-        """Cấu hình tag hiển thị thật, không chỉ chèn ký tự ** hoặc *."""
+        self._base_style = {
+            "family": self.font_family_menu.get() if hasattr(self, "font_family_menu") else "Arial",
+            "size": int(self.font_size_menu.get()) if hasattr(self, "font_size_menu") else 15,
+            "bold": False,
+            "italic": False,
+            "foreground": "",
+            "highlight": ""
+        }
+        zoom_mult = getattr(self, "zoom_factor", 1.0)
+        self._text_font = tkfont.Font(
+            family=self._base_style["family"],
+            size=int(self._base_style["size"] * zoom_mult),
+        )
         widget = self._text_widget()
-        self._text_font = tkfont.Font(family="Arial", size=15)
-        self._bold_font = tkfont.Font(family="Arial", size=15, weight="bold")
-        self._italic_font = tkfont.Font(family="Arial", size=15, slant="italic")
-        self._bold_italic_font = tkfont.Font(family="Arial", size=15, weight="bold", slant="italic")
+        widget.configure(font=self._text_font)
+        widget.tag_configure("sel", background="#2563eb", foreground="white")
+        widget.tag_raise("sel")
 
-        widget.tag_configure("bold", font=self._bold_font)
-        widget.tag_configure("italic", font=self._italic_font)
-        widget.tag_configure("bold_italic", font=self._bold_italic_font)
+    def _default_style(self):
+        return dict(self._base_style)
 
-    def _shortcut_format(self, event, style_name):
-        self.apply_text_style(style_name)
-        return "break"
+    def _normalize_style(self, style):
+        normalized = self._default_style()
+        normalized.update(style or {})
+        normalized["family"] = str(normalized.get("family") or "Arial")
+        normalized["size"] = max(8, int(normalized.get("size") or 15))
+        normalized["bold"] = bool(normalized.get("bold"))
+        normalized["italic"] = bool(normalized.get("italic"))
+        normalized["foreground"] = str(normalized.get("foreground") or "")
+        normalized["highlight"] = str(normalized.get("highlight") or "")
+        return normalized
+
+    def _style_tag_name(self, style):
+        style = self._normalize_style(style)
+        family = style["family"].replace("|", "_").replace(" ", "_")
+        foreground = style["foreground"] or "none"
+        highlight = style["highlight"] or "none"
+        return f"fmt|{family}|{style['size']}|{int(style['bold'])}|{int(style['italic'])}|{foreground}|{highlight}"
+
+    def _style_from_tag_name(self, tag_name):
+        if not tag_name.startswith("fmt|"):
+            return None
+        parts = tag_name.split("|", 6)
+        if len(parts) != 7:
+            return None
+        _, family, size, bold, italic, foreground, highlight = parts
+        return {
+            "family": family.replace("_", " "),
+            "size": int(size),
+            "bold": bool(int(bold)),
+            "italic": bool(int(italic)),
+            "foreground": "" if foreground == "none" else foreground,
+            "highlight": "" if highlight == "none" else highlight,
+        }
+
+    def _ensure_style_tag(self, tag_name, style):
+        widget = self._text_widget()
+        normalized = self._normalize_style(style)
+        zoom_mult = getattr(self, "zoom_factor", 1.0)
+        font = tkfont.Font(
+            family=normalized["family"],
+            size=int(normalized["size"] * zoom_mult),
+            weight="bold" if normalized["bold"] else "normal",
+            slant="italic" if normalized["italic"] else "roman"
+        )
+        kwargs = {"font": font}
+        if normalized["foreground"]:
+            kwargs["foreground"] = normalized["foreground"]
+        if normalized["highlight"]:
+            kwargs["background"] = normalized["highlight"]
+        self._font_cache[tag_name] = font
+        widget.tag_configure(tag_name, **kwargs)
 
     def _style_at_index(self, index):
         widget = self._text_widget()
-        tags = set(widget.tag_names(index))
-        if "bold_italic" in tags:
-            return True, True
-        return "bold" in tags, "italic" in tags
+        for tag_name in widget.tag_names(index):
+            style = self._style_from_tag_name(tag_name)
+            if style is not None:
+                return style
+        return self._default_style()
 
     def _apply_style_tag_to_range(self, start, end, style):
         widget = self._text_widget()
-        bold, italic = style
-        if bold and italic:
-            widget.tag_add("bold_italic", start, end)
-        elif bold:
-            widget.tag_add("bold", start, end)
-        elif italic:
-            widget.tag_add("italic", start, end)
+        style = self._normalize_style(style)
+        tag_name = self._style_tag_name(style)
+        self._ensure_style_tag(tag_name, style)
+        widget.tag_add(tag_name, start, end)
 
     def _remove_style_tags(self, start, end):
         widget = self._text_widget()
-        for tag_name in ("bold", "italic", "bold_italic"):
-            widget.tag_remove(tag_name, start, end)
+        for tag_name in widget.tag_names():
+            if tag_name.startswith("fmt|"):
+                widget.tag_remove(tag_name, start, end)
 
     def _get_selected_or_current_word_range(self):
         """Ưu tiên vùng đang bôi chọn; nếu không có thì áp dụng cho từ tại con trỏ."""
@@ -174,58 +300,104 @@ class EditorFrame(ctk.CTkFrame):
             yield index, next_index
             index = next_index
 
+    def _apply_style_updates(self, start, end, updates):
+        widget = self._text_widget()
+        for char_start, char_end in self._iterate_char_ranges(start, end):
+            style = self._normalize_style(self._style_at_index(char_start))
+            style.update(updates)
+            self._remove_style_tags(char_start, char_end)
+            self._apply_style_tag_to_range(char_start, char_end, style)
+        widget.tag_raise("sel")
+
     def apply_text_style(self, style_name):
-        """
-        Bôi đậm/in nghiêng bằng tag của Tkinter Text.
-        - Trên màn hình: chữ được in đậm/in nghiêng thật.
-        - Khi lưu: convert tag về Markdown để dữ liệu content cũ vẫn dùng được.
-        """
         if self.current_note_type != "Text":
             return
 
-        widget = self._text_widget()
         start, end = self._get_selected_or_current_word_range()
         if not start or not end:
             return
 
-        # Nếu toàn bộ vùng chọn đã có style này thì bấm lại để tắt; ngược lại thì bật.
         should_enable = False
         for char_start, _ in self._iterate_char_ranges(start, end):
-            bold, italic = self._style_at_index(char_start)
-            has_style = bold if style_name == "bold" else italic
+            style = self._style_at_index(char_start)
+            has_style = style.get(style_name, False)
             if not has_style:
                 should_enable = True
                 break
 
-        styled_segments = []
-        segment_start = start
-        current_style = None
+        self._apply_style_updates(start, end, {style_name: should_enable})
+        self._text_widget().tag_remove("sel", "1.0", "end")
+        self._text_widget().focus_set()
 
-        for char_start, char_end in self._iterate_char_ranges(start, end):
-            bold, italic = self._style_at_index(char_start)
-            if style_name == "bold":
-                bold = should_enable
-            else:
-                italic = should_enable
-            new_style = (bold, italic)
+    def apply_font_family(self, family_name):
+        if self.current_note_type != "Text":
+            return
+        start, end = self._get_selected_or_current_word_range()
+        if start and end:
+            self._apply_style_updates(start, end, {"family": family_name})
 
-            if current_style is None:
-                current_style = new_style
-                segment_start = char_start
-            elif new_style != current_style:
-                styled_segments.append((segment_start, char_start, current_style))
-                segment_start = char_start
-                current_style = new_style
+    def apply_font_size(self, size_value):
+        if self.current_note_type != "Text":
+            return
+        start, end = self._get_selected_or_current_word_range()
+        if start and end:
+            self._apply_style_updates(start, end, {"size": int(size_value)})
 
-        if current_style is not None:
-            styled_segments.append((segment_start, end, current_style))
+    def pick_text_color(self):
+        if self.current_note_type != "Text":
+            return
+        from ui.color_picker import CTkColorPicker
+        picker = CTkColorPicker(self, initial_color="#000000" if ctk.get_appearance_mode() == "Light" else "#ffffff", title="Chọn màu chữ")
+        self.wait_window(picker)
+        color = picker.result
+        if not color:
+            return
+        start, end = self._get_selected_or_current_word_range()
+        if start and end:
+            self._apply_style_updates(start, end, {"foreground": color})
 
-        self._remove_style_tags(start, end)
-        for seg_start, seg_end, style in styled_segments:
-            self._apply_style_tag_to_range(seg_start, seg_end, style)
+    def pick_highlight_color(self):
+        if self.current_note_type != "Text":
+            return
+        from ui.color_picker import CTkColorPicker
+        picker = CTkColorPicker(self, initial_color="#fcc419", title="Chọn màu highlight")
+        self.wait_window(picker)
+        color = picker.result
+        if not color:
+            return
+        start, end = self._get_selected_or_current_word_range()
+        if start and end:
+            self._apply_style_updates(start, end, {"highlight": color})
 
-        widget.tag_remove("sel", "1.0", "end")
-        widget.focus_set()
+    def on_zoom_release(self, event):
+        value = self.document_zoom_slider.get()
+        self.zoom_factor = float(value) / 100.0
+
+        widget = self._text_widget()
+        cursor_pos = widget.index("insert")
+        yview = widget.yview()
+
+        # 1. Update base font size
+        new_base_size = int(self._base_style["size"] * self.zoom_factor)
+        self._text_font.configure(size=new_base_size)
+
+        # 2. Update all fonts in self._font_cache
+        for tag_name, font in list(self._font_cache.items()):
+            style = self._style_from_tag_name(tag_name)
+            if style:
+                new_size = int(style["size"] * self.zoom_factor)
+                font.configure(size=new_size)
+
+        # Force a layout pass so scroll coordinates recalculate
+        self.update_idletasks()
+
+        # Restore position
+        try:
+            widget.mark_set("insert", cursor_pos)
+            widget.yview_moveto(yview[0])
+            widget.see("insert")
+        except Exception:
+            pass
 
     def _insert_segment_with_style(self, text, style):
         if not text:
@@ -234,13 +406,34 @@ class EditorFrame(ctk.CTkFrame):
         start = widget.index("insert")
         widget.insert("insert", text)
         end = widget.index("insert")
+        if isinstance(style, tuple):
+            style = self._normalize_style({
+                "bold": style[0] if len(style) > 0 else False,
+                "italic": style[1] if len(style) > 1 else False,
+            })
         self._apply_style_tag_to_range(start, end, style)
 
-    def _markdown_to_rich_text(self, content):
-        """Render Markdown cơ bản (**bold**, *italic*, ***bold italic***) thành tag hiển thị."""
+    def _render_content(self, content):
         widget = self._text_widget()
         widget.delete("1.0", "end")
         self._remove_style_tags("1.0", "end")
+
+        if isinstance(content, dict) and "text" in content:
+            text = str(content.get("text", ""))
+            widget.insert("1.0", text)
+            for span in content.get("spans", []):
+                try:
+                    start = f"1.0+{int(span.get('start', 0))}c"
+                    end = f"1.0+{int(span.get('end', 0))}c"
+                    self._apply_style_tag_to_range(start, end, span.get("style", {}))
+                except (TypeError, ValueError):
+                    continue
+            try:
+                widget.edit_reset()
+            except Exception:
+                pass
+            widget.tag_raise("sel")
+            return
 
         text = str(content or "")
         bold = False
@@ -273,40 +466,31 @@ class EditorFrame(ctk.CTkFrame):
                 i += 1
 
         flush_buffer()
+        try:
+            widget.edit_reset()
+        except Exception:
+            pass
+        widget.tag_raise("sel")
 
-    def _rich_text_to_markdown(self):
-        """Convert nội dung đang hiển thị cùng tag B/I về Markdown để lưu vào content TEXT cũ."""
+    def _serialize_content(self):
         widget = self._text_widget()
-        end = widget.index("end-1c")
-        result = []
-        current_style = (False, False)
+        text = widget.get("1.0", "end-1c")
+        if not text:
+            return {"text": "", "spans": []}
 
-        def close_style(style):
-            bold, italic = style
-            if italic:
-                result.append("*")
-            if bold:
-                result.append("**")
+        spans = []
+        current_style = self._normalize_style(self._style_at_index("1.0"))
+        span_start = 0
 
-        def open_style(style):
-            bold, italic = style
-            if bold:
-                result.append("**")
-            if italic:
-                result.append("*")
-
-        index = "1.0"
-        while widget.compare(index, "<", end):
-            style = self._style_at_index(index)
+        for index, _char in enumerate(text):
+            style = self._normalize_style(self._style_at_index(f"1.0+{index}c"))
             if style != current_style:
-                close_style(current_style)
-                open_style(style)
+                spans.append({"start": span_start, "end": index, "style": current_style})
+                span_start = index
                 current_style = style
-            result.append(widget.get(index, f"{index}+1c"))
-            index = widget.index(f"{index}+1c")
 
-        close_style(current_style)
-        return "".join(result).strip()
+        spans.append({"start": span_start, "end": len(text), "style": current_style})
+        return {"text": text, "spans": spans}
 
     # Giữ alias cũ để không làm lỗi nếu nơi khác còn gọi apply_markdown_format.
     def apply_markdown_format(self, marker):
@@ -330,16 +514,44 @@ class EditorFrame(ctk.CTkFrame):
 
         if note_type == "Checklist":
             self.checklist_frame.grid(row=0, column=0, sticky="nsew")
-            self.add_item_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+            self.add_item_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 10))
             self.btn_bold.configure(state="disabled")
             self.btn_italic.configure(state="disabled")
+            self.font_family_menu.configure(state="disabled")
+            self.font_size_menu.configure(state="disabled")
+            self.document_zoom_slider.configure(state="disabled")
+            self.btn_undo.configure(state="disabled")
+            self.btn_redo.configure(state="disabled")
         else:  # Text Note
             self.textbox_content.grid(row=0, column=0, sticky="nsew")
             self.btn_bold.configure(state="normal")
             self.btn_italic.configure(state="normal")
+            self.font_family_menu.configure(state="normal")
+            self.font_size_menu.configure(state="normal")
+            self.document_zoom_slider.configure(state="normal")
+            self.btn_undo.configure(state="normal")
+            self.btn_redo.configure(state="normal")
 
     def _add_checklist_item_from_enter(self, event):
         self.add_checklist_item()
+        return "break"
+
+    def undo_text(self):
+        if self.current_note_type != "Text":
+            return "break"
+        try:
+            self._text_widget().edit_undo()
+        except tk.TclError:
+            pass
+        return "break"
+
+    def redo_text(self):
+        if self.current_note_type != "Text":
+            return "break"
+        try:
+            self._text_widget().edit_redo()
+        except tk.TclError:
+            pass
         return "break"
 
     def add_checklist_item(self, text="", is_done=False):
@@ -380,16 +592,63 @@ class EditorFrame(ctk.CTkFrame):
         except ValueError:
             return str(value)
 
+    def _parse_datetime_value(self, value):
+        value = (value or "").strip()
+        if not value:
+            return None
+        for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                pass
+        try:
+            return datetime.fromisoformat(value)
+        except ValueError:
+            return None
+
+    def _set_datetime_entry(self, entry, value):
+        entry.delete(0, "end")
+        entry.insert(0, value)
+
+    def open_datetime_picker(self, target_entry, title):
+        initial_dt = self._parse_datetime_value(target_entry.get()) or datetime.now().replace(second=0, microsecond=0)
+
+        def on_date_selected(selected_str):
+            self._set_datetime_entry(target_entry, selected_str)
+            if hasattr(target_entry, '_activate_placeholder') and not selected_str:
+                target_entry._activate_placeholder()
+
+        CTkDatePicker(
+            self,
+            initial_dt=initial_dt,
+            title=title,
+            on_select=on_date_selected
+        )
+
     def set_data(self, title, content_data, note_type, reminder_at=None, deadline_at=None, is_locked=False):
         self.setup_ui_mode(note_type)
         self.entry_title.delete(0, 'end')
-        self.entry_title.insert(0, title)
+        if title:
+            self.entry_title.insert(0, title)
+        else:
+            if hasattr(self.entry_title, '_activate_placeholder'):
+                self.entry_title._activate_placeholder()
 
         self.entry_reminder.delete(0, 'end')
-        self.entry_reminder.insert(0, self._format_datetime_for_entry(reminder_at))
+        val_reminder = self._format_datetime_for_entry(reminder_at)
+        if val_reminder:
+            self.entry_reminder.insert(0, val_reminder)
+        elif hasattr(self.entry_reminder, '_activate_placeholder'):
+            self.entry_reminder._activate_placeholder()
+
         self.entry_deadline.delete(0, 'end')
-        self.entry_deadline.insert(0, self._format_datetime_for_entry(deadline_at))
+        val_deadline = self._format_datetime_for_entry(deadline_at)
+        if val_deadline:
+            self.entry_deadline.insert(0, val_deadline)
+        elif hasattr(self.entry_deadline, '_activate_placeholder'):
+            self.entry_deadline._activate_placeholder()
         self.set_lock_state(is_locked=is_locked, enabled=bool(title))
+        self.textbox_content.configure(height=self._editor_default_height)
 
         if note_type == "Checklist":
             self.clear_checklist_items()
@@ -400,8 +659,19 @@ class EditorFrame(ctk.CTkFrame):
                     text = item.get("content") if isinstance(item, dict) else getattr(item, 'content', str(item))
                     done = item.get("is_done") if isinstance(item, dict) else getattr(item, 'is_done', False)
                     self.add_checklist_item(text, done)
+            
+            # Focus on the new item entry instead of the title to show the title's placeholder
+            self.new_item_entry.focus_set()
         else:
-            self._markdown_to_rich_text(content_data)
+            self._render_content(content_data)
+            # Focus on the textbox instead of the title to show the title's placeholder
+            self.textbox_content.focus_set()
+
+        if note_type == "Text":
+            try:
+                self._text_widget().edit_reset()
+            except Exception:
+                pass
 
     def get_data(self):
         title = self.entry_title.get().strip()
@@ -411,7 +681,7 @@ class EditorFrame(ctk.CTkFrame):
                 for item in self.checklist_vars
             ]
         else:
-            content = self._rich_text_to_markdown()
+            content = self._serialize_content()
 
         return {
             "title": title,
