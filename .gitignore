@@ -50,3 +50,7 @@ Desktop.ini
 .DS_Store
 .AppleDouble
 .LSOverride
+
+pyproject.toml
+README.md
+uv.lock
