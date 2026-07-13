@@ -1,6 +1,8 @@
-import customtkinter as ctk
+import re
 import tkinter as tk
 import tkinter.font as tkfont
+
+import customtkinter as ctk
 from tkinter import ttk, messagebox, colorchooser
 from datetime import datetime
 from ui.date_picker import CTkDatePicker
@@ -23,6 +25,8 @@ class EditorFrame(ctk.CTkFrame):
         self._font_cache = {}
         self._font_cache_initialized = set()
         self.zoom_factor = 1.0
+        self._content_search_matches = []
+        self._content_search_index = -1
 
         self._reminder_placeholder = "YYYY-MM-DD HH:MM"
         self._deadline_placeholder = "YYYY-MM-DD HH:MM"
@@ -56,6 +60,38 @@ class EditorFrame(ctk.CTkFrame):
             command=lambda: self.apply_text_style("underline"), **btn_kwargs
         )
         self.btn_underline.pack(side="left", padx=3)
+
+        # Tìm kiếm chỉ trong nội dung của ghi chú đang mở.
+        self.content_search_entry = ctk.CTkEntry(
+            self.toolbar,
+            placeholder_text="🔍 Tìm trong nội dung note...",
+            width=320,
+            fg_color=ThemeManager.get("cell_bg"),
+            text_color=ThemeManager.get("text_primary"),
+            border_color=ThemeManager.get("grid_border"),
+            border_width=3
+        )
+        self.content_search_entry.pack(side="left", padx=(16, 5))
+        self.content_search_entry.bind("<KeyRelease>", self.search_current_note)
+        self.content_search_entry.bind("<Escape>", self.clear_content_search)
+
+        self.btn_search_previous = ctk.CTkButton(
+            self.toolbar, text="‹", width=32,
+            command=lambda: self.navigate_content_search(-1), **btn_kwargs
+        )
+        self.btn_search_previous.pack(side="left", padx=(0, 3))
+
+        self.btn_search_next = ctk.CTkButton(
+            self.toolbar, text="›", width=32,
+            command=lambda: self.navigate_content_search(1), **btn_kwargs
+        )
+        self.btn_search_next.pack(side="left", padx=(0, 5))
+
+        self.content_search_status = ctk.CTkLabel(
+            self.toolbar, text="", width=48,
+            text_color=ThemeManager.get("text_secondary")
+        )
+        self.content_search_status.pack(side="left")
 
         self.format_bar = ctk.CTkFrame(self, fg_color="transparent")
         self.format_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
@@ -181,6 +217,133 @@ class EditorFrame(ctk.CTkFrame):
         widget.bind("<<Selection>>", self._on_cursor_moved)
         widget.bind("<KeyRelease>", self._on_cursor_moved)
         widget.bind("<ButtonRelease-1>", self._on_cursor_moved)
+
+        widget.tag_configure(
+            "content_search_match",
+            background="#fde68a",
+            foreground="#111827"
+        )
+        widget.tag_configure(
+            "content_search_current",
+            background="#fb923c",
+            foreground="#111827"
+        )
+        widget.tag_raise("content_search_match")
+        widget.tag_raise("content_search_current")
+
+    @staticmethod
+    def _find_content_occurrences(content, keyword):
+        if not keyword:
+            return []
+        return [
+            (match.start(), match.end())
+            for match in re.finditer(re.escape(keyword), content, re.IGNORECASE)
+        ]
+
+    def _reset_checklist_search_style(self):
+        for item in self.checklist_vars:
+            try:
+                item["checkbox"].configure(
+                    text_color=item.get("search_default_text_color", ThemeManager.get("text_primary")),
+                    border_color=item.get("search_default_border_color", ThemeManager.get("text_primary"))
+                )
+            except tk.TclError:
+                pass
+
+    def _clear_content_search_highlights(self):
+        try:
+            widget = self._text_widget()
+            widget.tag_remove("content_search_match", "1.0", "end")
+            widget.tag_remove("content_search_current", "1.0", "end")
+        except (AttributeError, tk.TclError):
+            pass
+        self._reset_checklist_search_style()
+        self._content_search_matches = []
+        self._content_search_index = -1
+        self.content_search_status.configure(text="")
+
+    def clear_content_search(self, event=None):
+        self.content_search_entry.delete(0, "end")
+        self._clear_content_search_highlights()
+        return "break" if event is not None else None
+
+    def search_current_note(self, event=None):
+        if event is not None and event.keysym in ("Return", "KP_Enter"):
+            direction = -1 if event.state & 0x0001 else 1
+            self.navigate_content_search(direction)
+            return "break"
+
+        keyword = self.content_search_entry.get().strip()
+        self._clear_content_search_highlights()
+        if not keyword:
+            return
+
+        if self.current_note_type == "Checklist":
+            for item in self.checklist_vars:
+                checkbox = item["checkbox"]
+                if self._find_content_occurrences(str(checkbox.cget("text")), keyword):
+                    checkbox.configure(
+                        text_color=ThemeManager.get("accent_primary"),
+                        border_color=ThemeManager.get("accent_primary")
+                    )
+                    self._content_search_matches.append(item)
+        else:
+            widget = self._text_widget()
+            content = widget.get("1.0", "end-1c")
+            for start_offset, end_offset in self._find_content_occurrences(content, keyword):
+                start = f"1.0+{start_offset}c"
+                end = f"1.0+{end_offset}c"
+                widget.tag_add("content_search_match", start, end)
+                self._content_search_matches.append((start, end))
+            widget.tag_raise("content_search_match")
+            widget.tag_raise("content_search_current")
+
+        if self._content_search_matches:
+            self._content_search_index = 0
+            self._activate_content_search_match()
+        else:
+            self.content_search_status.configure(text="0/0")
+
+    def _activate_content_search_match(self):
+        total = len(self._content_search_matches)
+        if not total:
+            self.content_search_status.configure(text="0/0")
+            return
+
+        self._content_search_index %= total
+        self.content_search_status.configure(
+            text=f"{self._content_search_index + 1}/{total}"
+        )
+
+        if self.current_note_type == "Checklist":
+            self._reset_checklist_search_style()
+            for item in self._content_search_matches:
+                item["checkbox"].configure(
+                    text_color=ThemeManager.get("accent_primary"),
+                    border_color=ThemeManager.get("accent_primary")
+                )
+            current = self._content_search_matches[self._content_search_index]
+            current["checkbox"].configure(
+                text_color=("#c2410c", "#fb923c"),
+                border_color=("#c2410c", "#fb923c")
+            )
+            return
+
+        widget = self._text_widget()
+        widget.tag_remove("content_search_current", "1.0", "end")
+        start, end = self._content_search_matches[self._content_search_index]
+        widget.tag_add("content_search_current", start, end)
+        widget.tag_raise("content_search_current")
+        widget.see(start)
+
+    def navigate_content_search(self, direction=1):
+        if not self._content_search_matches:
+            self.search_current_note()
+            if not self._content_search_matches:
+                return
+        else:
+            self._content_search_index += direction
+        self._activate_content_search_match()
 
     def _on_cursor_moved(self, event=None):
         if self.current_note_type != "Text":
@@ -622,7 +785,12 @@ class EditorFrame(ctk.CTkFrame):
             text_color=ThemeManager.get("text_primary")
         )
         cb.pack(anchor="w", pady=5, padx=10)
-        self.checklist_vars.append({"checkbox": cb, "var": var})
+        self.checklist_vars.append({
+            "checkbox": cb,
+            "var": var,
+            "search_default_text_color": cb.cget("text_color"),
+            "search_default_border_color": cb.cget("border_color")
+        })
 
     def clear_checklist_items(self):
         for item in self.checklist_vars:
@@ -671,6 +839,7 @@ class EditorFrame(ctk.CTkFrame):
         self.set_data("", "", note_type, reminder_at=None, deadline_at=None, is_locked=False)
 
     def set_data(self, title, content_data, note_type, reminder_at=None, deadline_at=None, is_locked=False):
+        self.clear_content_search()
         self.setup_ui_mode(note_type)
         self.entry_title.delete(0, 'end')
         if title:
