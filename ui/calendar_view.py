@@ -69,7 +69,7 @@ class CTkCalendarView(ctk.CTkToplevel):
         self.grid_frame = ctk.CTkFrame(
             self, 
             fg_color=ThemeManager.get("grid_bg"), 
-            border_width=1, 
+            border_width=2, 
             border_color=ThemeManager.get("grid_border")
         )
         self.grid_frame.pack(fill="both", expand=True, padx=15, pady=(0, 15))
@@ -129,7 +129,7 @@ class CTkCalendarView(ctk.CTkToplevel):
             for col, day in enumerate(week):
                 cell = ctk.CTkFrame(
                     self.grid_frame,
-                    border_width=1,
+                    border_width=2,
                     fg_color=ThemeManager.get("cell_bg"),
                     border_color=ThemeManager.get("cell_border")
                 )

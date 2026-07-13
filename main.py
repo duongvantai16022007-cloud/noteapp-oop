@@ -6,7 +6,10 @@ if __name__ == "__main__":
     settings = SettingsService().get_all()
     ctk.set_appearance_mode(settings.get("appearance_mode", "System"))
     color_theme = settings.get("color_theme", "blue").lower().replace(" ", "-")
-    ctk.set_default_color_theme(color_theme)
+    try:
+        ctk.set_default_color_theme(color_theme)
+    except Exception:
+        ctk.set_default_color_theme("blue")
 
     app = MainWindow()
     app.mainloop()

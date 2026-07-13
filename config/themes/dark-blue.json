@@ -1,11 +1,11 @@
 {
-  "popup_bg": ["#f0f2f5", "#1a1a1a"],
-  "text_primary": ["gray10", "gray90"],
-  "text_secondary": ["gray45", "gray65"],
-  "text_muted": ["gray55", "gray45"],
-  "text_extra": ["gray40", "gray70"],
-  "text_on_accent": ["white", "white"],
-  "text_weekday": ["#374151", "#d1d5db"],
+  "popup_bg": ["#f4f6f9", "#0e131f"],
+  "text_primary": ["#0f172a", "#f1f5f9"],
+  "text_secondary": ["#475569", "#cbd5e1"],
+  "text_muted": ["#64748b", "#94a3b8"],
+  "text_extra": ["#334155", "#e2e8f0"],
+  "text_on_accent": ["#ffffff", "#ffffff"],
+  "text_weekday": ["#1e293b", "#94a3b8"],
 
   "accent_primary": ["#1d4ed8", "#1e3a8a"],
   "accent_primary_hover": ["#2563eb", "#1d4ed8"],
@@ -14,17 +14,17 @@
   "accent_danger": ["#ef4444", "#ef4444"],
   "accent_danger_hover": ["#dc2626", "#dc2626"],
 
-  "btn_secondary": ["gray85", "gray25"],
-  "btn_secondary_hover": ["gray75", "gray35"],
-  "btn_cancel": ["gray65", "gray35"],
-  "btn_cancel_hover": ["gray55", "gray25"],
+  "btn_secondary": ["#e2e8f0", "#1e293b"],
+  "btn_secondary_hover": ["#cbd5e1", "#334155"],
+  "btn_cancel": ["#94a3b8", "#334155"],
+  "btn_cancel_hover": ["#64748b", "#1e293b"],
 
-  "grid_bg": ["white", "#242424"],
-  "grid_border": ["gray85", "gray20"],
-  "cell_bg": ["#f9fafb", "#1f2937"],
-  "cell_bg_muted": ["#f3f4f6", "#1f2937"],
-  "cell_border": ["#e5e7eb", "#374151"],
+  "grid_bg": ["#ffffff", "#131a2e"],
+  "grid_border": ["#e2e8f0", "#1e293b"],
+  "cell_bg": ["#f8fafc", "#1e293b"],
+  "cell_bg_muted": ["#f1f5f9", "#1e293b"],
+  "cell_border": ["#e2e8f0", "#334155"],
 
-  "btn_note": ["gray90", "gray20"],
-  "btn_note_hover": ["gray80", "gray30"]
+  "btn_note": ["#e2e8f0", "#17223b"],
+  "btn_note_hover": ["#cbd5e1", "#233354"]
 }

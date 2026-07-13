@@ -10,14 +10,7 @@ from services.theme_service import ThemeManager
 class EditorFrame(ctk.CTkFrame):
     def __init__(
         self,
-        master,
-        on_save,
-        on_delete,
-        on_undo,
-        on_redo,
-        on_export_md,
-        on_export_pdf,
-        on_lock_toggle
+        master
     ):
         super().__init__(master, fg_color="transparent")
         self.grid_rowconfigure(3, weight=1)
@@ -32,21 +25,22 @@ class EditorFrame(ctk.CTkFrame):
         self.zoom_factor = 1.0
         self._zoom_job = None
 
-        # Toolbar: Chứa Export, Undo/Redo, định dạng cơ bản, khóa ghi chú.
+        # Toolbar: Chứa định dạng cơ bản
         self.toolbar = ctk.CTkFrame(self, fg_color="transparent", height=40)
         self.toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
 
-        self.btn_undo = ctk.CTkButton(self.toolbar, text="⟲ Undo", width=70, command=on_undo)
-        self.btn_undo.pack(side="left", padx=5)
-        self.btn_redo = ctk.CTkButton(self.toolbar, text="⟳ Redo", width=70, command=on_redo)
-        self.btn_redo.pack(side="left", padx=5)
-
+        btn_kwargs = dict(
+            fg_color=ThemeManager.get("btn_secondary"),
+            hover_color=ThemeManager.get("btn_secondary_hover"),
+            text_color=ThemeManager.get("text_primary")
+        )
         self.btn_bold = ctk.CTkButton(
             self.toolbar,
             text="B",
             width=38,
             font=ctk.CTkFont(weight="bold"),
-            command=lambda: self.apply_text_style("bold")
+            command=lambda: self.apply_text_style("bold"),
+            **btn_kwargs
         )
         self.btn_bold.pack(side="left", padx=(20, 3))
 
@@ -55,45 +49,62 @@ class EditorFrame(ctk.CTkFrame):
             text="I",
             width=38,
             font=ctk.CTkFont(slant="italic"),
-            command=lambda: self.apply_text_style("italic")
+            command=lambda: self.apply_text_style("italic"),
+            **btn_kwargs
         )
         self.btn_italic.pack(side="left", padx=3)
 
-        self.btn_lock = ctk.CTkButton(self.toolbar, text="🔒 Khóa", width=95, command=on_lock_toggle)
-        self.btn_lock.pack(side="left", padx=(20, 5))
-
-        ctk.CTkButton(self.toolbar, text="⬇ Xuất Markdown", width=120, command=on_export_md).pack(side="right", padx=5)
-        ctk.CTkButton(self.toolbar, text="⬇ Xuất PDF", width=100, command=on_export_pdf).pack(side="right", padx=5)
+        self.btn_underline = ctk.CTkButton(
+            self.toolbar,
+            text="U",
+            width=38,
+            font=ctk.CTkFont(underline=True),
+            command=lambda: self.apply_text_style("underline"),
+            **btn_kwargs
+        )
+        self.btn_underline.pack(side="left", padx=3)
 
         self.format_bar = ctk.CTkFrame(self, fg_color="transparent")
         self.format_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         self.format_bar.grid_columnconfigure(7, weight=0)
         self.format_bar.grid_columnconfigure(8, weight=1) # Empty space to absorb width
 
-        ctk.CTkLabel(self.format_bar, text="Font").grid(row=0, column=0, padx=(0, 6), sticky="w")
+        menu_kwargs = dict(
+            fg_color=ThemeManager.get("btn_secondary"),
+            button_color=ThemeManager.get("btn_secondary"),
+            button_hover_color=ThemeManager.get("btn_secondary_hover"),
+            text_color=ThemeManager.get("text_primary"),
+            dropdown_fg_color=ThemeManager.get("popup_bg"),
+            dropdown_text_color=ThemeManager.get("text_primary"),
+            dropdown_hover_color=ThemeManager.get("btn_secondary_hover")
+        )
+
+        ctk.CTkLabel(self.format_bar, text="Font", text_color=ThemeManager.get("text_primary")).grid(row=0, column=0, padx=(0, 6), sticky="w")
         self.font_family_menu = ctk.CTkOptionMenu(
             self.format_bar,
             values=["Arial", "Helvetica", "Times New Roman", "Georgia", "Verdana", "Courier New"],
             width=140,
-            command=self.apply_font_family
+            command=self.apply_font_family,
+            **menu_kwargs
         )
         self.font_family_menu.set("Arial")
         self.font_family_menu.grid(row=0, column=1, padx=(0, 10), sticky="w")
 
-        ctk.CTkLabel(self.format_bar, text="Size").grid(row=0, column=2, padx=(0, 6), sticky="w")
+        ctk.CTkLabel(self.format_bar, text="Size", text_color=ThemeManager.get("text_primary")).grid(row=0, column=2, padx=(0, 6), sticky="w")
         self.font_size_menu = ctk.CTkOptionMenu(
             self.format_bar,
             values=["10", "11", "12", "14", "16", "18", "20", "24", "28", "32"],
             width=72,
-            command=self.apply_font_size
+            command=self.apply_font_size,
+            **menu_kwargs
         )
         self.font_size_menu.set("15")
         self.font_size_menu.grid(row=0, column=3, padx=(0, 10), sticky="w")
 
-        ctk.CTkButton(self.format_bar, text="Màu chữ", width=88, command=self.pick_text_color).grid(row=0, column=4, padx=(0, 8), sticky="w")
-        ctk.CTkButton(self.format_bar, text="Highlight", width=90, command=self.pick_highlight_color).grid(row=0, column=5, padx=(0, 8), sticky="w")
+        ctk.CTkButton(self.format_bar, text="Màu chữ", width=88, command=self.pick_text_color, **btn_kwargs).grid(row=0, column=4, padx=(0, 8), sticky="w")
+        ctk.CTkButton(self.format_bar, text="Highlight", width=90, command=self.pick_highlight_color, **btn_kwargs).grid(row=0, column=5, padx=(0, 8), sticky="w")
 
-        ctk.CTkLabel(self.format_bar, text="Zoom").grid(row=0, column=6, padx=(0, 6), sticky="w")
+        ctk.CTkLabel(self.format_bar, text="Zoom", text_color=ThemeManager.get("text_primary")).grid(row=0, column=6, padx=(0, 6), sticky="w")
         self.document_zoom_slider = ctk.CTkSlider(self.format_bar, from_=50, to=200, number_of_steps=30, width=130)
         self.document_zoom_slider.set(100)
         self.document_zoom_slider.grid(row=0, column=7, padx=(0, 8), sticky="w")
@@ -105,7 +116,8 @@ class EditorFrame(ctk.CTkFrame):
             placeholder_text="Nhập tiêu đề...",
             font=ctk.CTkFont(size=24, weight="bold"),
             border_width=0,
-            fg_color="transparent"
+            fg_color="transparent",
+            text_color=ThemeManager.get("text_primary")
         )
         self.entry_title.grid(row=2, column=0, columnspan=2, pady=(0, 10), sticky="ew")
 
@@ -120,37 +132,37 @@ class EditorFrame(ctk.CTkFrame):
         self._create_textbox_widget()
 
         # 2. UI cho Checklist Note - GIỮ NGUYÊN các ô checkbox như bản cũ
-        self.checklist_frame = ctk.CTkScrollableFrame(self.content_container)
+        self.checklist_frame = ctk.CTkScrollableFrame(self.content_container, fg_color=ThemeManager.get("cell_bg"))
 
         # Metadata: reminder/deadline
         self.meta_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.meta_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
         self.meta_frame.grid_columnconfigure(0, weight=1) # Spacer column to push everything right
 
-        ctk.CTkLabel(self.meta_frame, text="🔔 Nhắc lúc").grid(row=0, column=1, padx=(0, 8), sticky="e")
-        self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM", width=140)
-        self.entry_reminder.grid(row=0, column=2, padx=(0, 5), sticky="e")
-        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_reminder, "Chọn thời gian nhắc")).grid(row=0, column=3, padx=(0, 15), sticky="e")
+        entry_kwargs = dict(
+            fg_color=ThemeManager.get("cell_bg"),
+            text_color=ThemeManager.get("text_primary"),
+            border_color=ThemeManager.get("grid_border"),
+            border_width=3
+        )
 
-        ctk.CTkLabel(self.meta_frame, text="📌 Deadline").grid(row=0, column=4, padx=(0, 8), sticky="e")
-        self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM", width=140)
+        ctk.CTkLabel(self.meta_frame, text="🔔 Nhắc lúc", text_color=ThemeManager.get("text_primary")).grid(row=0, column=1, padx=(0, 8), sticky="e")
+        self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM", width=140, **entry_kwargs)
+        self.entry_reminder.grid(row=0, column=2, padx=(0, 5), sticky="e")
+        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_reminder, "Chọn thời gian nhắc"), **btn_kwargs).grid(row=0, column=3, padx=(0, 15), sticky="e")
+
+        ctk.CTkLabel(self.meta_frame, text="📌 Deadline", text_color=ThemeManager.get("text_primary")).grid(row=0, column=4, padx=(0, 8), sticky="e")
+        self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM", width=140, **entry_kwargs)
         self.entry_deadline.grid(row=0, column=5, padx=(0, 5), sticky="e")
-        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_deadline, "Chọn deadline")).grid(row=0, column=6, padx=(0, 0), sticky="e")
+        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_deadline, "Chọn deadline"), **btn_kwargs).grid(row=0, column=6, padx=(0, 0), sticky="e")
         self.meta_frame.grid_columnconfigure((1, 6), weight=0)
 
         # Khung thêm item cho Checklist
         self.add_item_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.new_item_entry = ctk.CTkEntry(self.add_item_frame, placeholder_text="Thêm công việc mới...")
+        self.new_item_entry = ctk.CTkEntry(self.add_item_frame, placeholder_text="Thêm công việc mới...", **entry_kwargs)
         self.new_item_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        ctk.CTkButton(self.add_item_frame, text="Thêm", width=80, command=self.add_checklist_item).pack(side="right")
+        ctk.CTkButton(self.add_item_frame, text="Thêm", width=80, command=self.add_checklist_item, fg_color=ThemeManager.get("accent_primary"), hover_color=ThemeManager.get("accent_primary_hover"), text_color=ThemeManager.get("text_on_accent")).pack(side="right")
         self.new_item_entry.bind("<Return>", lambda event: self._add_checklist_item_from_enter(event))
-
-        # Nút chức năng cuối
-        self.btn_delete = ctk.CTkButton(self, text="🗑 Xóa", fg_color=ThemeManager.get("accent_danger"), hover_color=ThemeManager.get("accent_danger_hover"), command=on_delete)
-        self.btn_delete.grid(row=6, column=0, sticky="w")
-
-        self.btn_save = ctk.CTkButton(self, text="💾 Lưu Ghi Chú", command=lambda: on_save(self.get_data(), self.current_note_type))
-        self.btn_save.grid(row=6, column=1, sticky="e")
 
     def _create_textbox_widget(self):
         self.textbox_content = ctk.CTkTextbox(
@@ -159,22 +171,28 @@ class EditorFrame(ctk.CTkFrame):
             wrap="word",
             undo=True,
             autoseparators=True,
-            maxundo=-1
+            maxundo=-1,
+            fg_color=ThemeManager.get("cell_bg"),
+            text_color=ThemeManager.get("text_primary"),
+            border_color=ThemeManager.get("grid_border"),
+            border_width=3
         )
         self.textbox_content.configure(height=self._editor_default_height)
         self._configure_text_tags()
-        self.textbox_content.bind("<Control-b>", lambda event: self._shortcut_format(event, "bold"))
-        self.textbox_content.bind("<Control-i>", lambda event: self._shortcut_format(event, "italic"))
-        self.textbox_content.bind("<Control-z>", lambda event: self.undo_text())
-        self.textbox_content.bind("<Control-y>", lambda event: self.redo_text())
-        self.textbox_content.bind("<Command-z>", lambda event: self.undo_text())
-        self.textbox_content.bind("<Command-Shift-z>", lambda event: self.redo_text())
-        self._text_widget().bind("<Control-b>", lambda event: self._shortcut_format(event, "bold"))
-        self._text_widget().bind("<Control-i>", lambda event: self._shortcut_format(event, "italic"))
-        self._text_widget().bind("<Control-z>", lambda event: self.undo_text())
-        self._text_widget().bind("<Control-y>", lambda event: self.redo_text())
-        self._text_widget().bind("<Command-z>", lambda event: self.undo_text())
-        self._text_widget().bind("<Command-Shift-z>", lambda event: self.redo_text())
+        self.textbox_content.bind("<Control-b>", lambda event=None: self._shortcut_format(event, "bold"))
+        self.textbox_content.bind("<Control-i>", lambda event=None: self._shortcut_format(event, "italic"))
+        self.textbox_content.bind("<Control-u>", lambda event=None: self._shortcut_format(event, "underline"))
+        self.textbox_content.bind("<Control-z>", lambda event=None: self.undo_text())
+        self.textbox_content.bind("<Control-y>", lambda event=None: self.redo_text())
+        self.textbox_content.bind("<Command-z>", lambda event=None: self.undo_text())
+        self.textbox_content.bind("<Command-Shift-z>", lambda event=None: self.redo_text())
+        self._text_widget().bind("<Control-b>", lambda event=None: self._shortcut_format(event, "bold"))
+        self._text_widget().bind("<Control-i>", lambda event=None: self._shortcut_format(event, "italic"))
+        self._text_widget().bind("<Control-u>", lambda event=None: self._shortcut_format(event, "underline"))
+        self._text_widget().bind("<Control-z>", lambda event=None: self.undo_text())
+        self._text_widget().bind("<Control-y>", lambda event=None: self.redo_text())
+        self._text_widget().bind("<Command-z>", lambda event=None: self.undo_text())
+        self._text_widget().bind("<Command-Shift-z>", lambda event=None: self.redo_text())
 
     # =========================
     # Rich text cơ bản B/I
@@ -189,6 +207,7 @@ class EditorFrame(ctk.CTkFrame):
             "size": int(self.font_size_menu.get()) if hasattr(self, "font_size_menu") else 15,
             "bold": False,
             "italic": False,
+            "underline": False,
             "foreground": "",
             "highlight": ""
         }
@@ -212,6 +231,7 @@ class EditorFrame(ctk.CTkFrame):
         normalized["size"] = max(8, int(normalized.get("size") or 15))
         normalized["bold"] = bool(normalized.get("bold"))
         normalized["italic"] = bool(normalized.get("italic"))
+        normalized["underline"] = bool(normalized.get("underline"))
         normalized["foreground"] = str(normalized.get("foreground") or "")
         normalized["highlight"] = str(normalized.get("highlight") or "")
         return normalized
@@ -221,20 +241,21 @@ class EditorFrame(ctk.CTkFrame):
         family = style["family"].replace("|", "_").replace(" ", "_")
         foreground = style["foreground"] or "none"
         highlight = style["highlight"] or "none"
-        return f"fmt|{family}|{style['size']}|{int(style['bold'])}|{int(style['italic'])}|{foreground}|{highlight}"
+        return f"fmt|{family}|{style['size']}|{int(style['bold'])}|{int(style['italic'])}|{int(style['underline'])}|{foreground}|{highlight}"
 
     def _style_from_tag_name(self, tag_name):
         if not tag_name.startswith("fmt|"):
             return None
-        parts = tag_name.split("|", 6)
-        if len(parts) != 7:
+        parts = tag_name.split("|", 7)
+        if len(parts) != 8:
             return None
-        _, family, size, bold, italic, foreground, highlight = parts
+        _, family, size, bold, italic, underline, foreground, highlight = parts
         return {
             "family": family.replace("_", " "),
             "size": int(size),
             "bold": bool(int(bold)),
             "italic": bool(int(italic)),
+            "underline": bool(int(underline)),
             "foreground": "" if foreground == "none" else foreground,
             "highlight": "" if highlight == "none" else highlight,
         }
@@ -247,7 +268,8 @@ class EditorFrame(ctk.CTkFrame):
             family=normalized["family"],
             size=int(normalized["size"] * zoom_mult),
             weight="bold" if normalized["bold"] else "normal",
-            slant="italic" if normalized["italic"] else "roman"
+            slant="italic" if normalized["italic"] else "roman",
+            underline=normalized["underline"]
         )
         kwargs = {"font": font}
         if normalized["foreground"]:
@@ -520,8 +542,6 @@ class EditorFrame(ctk.CTkFrame):
             self.font_family_menu.configure(state="disabled")
             self.font_size_menu.configure(state="disabled")
             self.document_zoom_slider.configure(state="disabled")
-            self.btn_undo.configure(state="disabled")
-            self.btn_redo.configure(state="disabled")
         else:  # Text Note
             self.textbox_content.grid(row=0, column=0, sticky="nsew")
             self.btn_bold.configure(state="normal")
@@ -529,8 +549,6 @@ class EditorFrame(ctk.CTkFrame):
             self.font_family_menu.configure(state="normal")
             self.font_size_menu.configure(state="normal")
             self.document_zoom_slider.configure(state="normal")
-            self.btn_undo.configure(state="normal")
-            self.btn_redo.configure(state="normal")
 
     def _add_checklist_item_from_enter(self, event):
         self.add_checklist_item()
@@ -564,7 +582,7 @@ class EditorFrame(ctk.CTkFrame):
             return
 
         var = ctk.BooleanVar(value=is_done)
-        cb = ctk.CTkCheckBox(self.checklist_frame, text=text, variable=var)
+        cb = ctk.CTkCheckBox(self.checklist_frame, text=text, variable=var, fg_color=ThemeManager.get("accent_primary"), text_color=ThemeManager.get("text_primary"))
         cb.pack(anchor="w", pady=5, padx=10)
         self.checklist_vars.append({"checkbox": cb, "var": var})
 
@@ -574,14 +592,7 @@ class EditorFrame(ctk.CTkFrame):
             item["checkbox"].destroy()
         self.checklist_vars.clear()
 
-    def set_lock_state(self, is_locked=False, enabled=True):
-        if not enabled:
-            self.btn_lock.configure(text="🔒 Khóa", state="disabled")
-            return
-        self.btn_lock.configure(
-            text="🔓 Gỡ khóa" if is_locked else "🔒 Khóa",
-            state="normal"
-        )
+
 
     def _format_datetime_for_entry(self, value):
         if not value:
@@ -625,6 +636,10 @@ class EditorFrame(ctk.CTkFrame):
             on_select=on_date_selected
         )
 
+    def prepare_new(self, note_type):
+        self.current_note = None
+        self.set_data("", "", note_type, reminder_at=None, deadline_at=None, is_locked=False)
+
     def set_data(self, title, content_data, note_type, reminder_at=None, deadline_at=None, is_locked=False):
         self.setup_ui_mode(note_type)
         self.entry_title.delete(0, 'end')
@@ -647,7 +662,6 @@ class EditorFrame(ctk.CTkFrame):
             self.entry_deadline.insert(0, val_deadline)
         elif hasattr(self.entry_deadline, '_activate_placeholder'):
             self.entry_deadline._activate_placeholder()
-        self.set_lock_state(is_locked=is_locked, enabled=bool(title))
         self.textbox_content.configure(height=self._editor_default_height)
 
         if note_type == "Checklist":

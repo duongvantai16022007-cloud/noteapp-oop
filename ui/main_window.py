@@ -1,5 +1,6 @@
 import customtkinter as ctk
-from tkinter import messagebox, filedialog, simpledialog
+import tkinter as tk
+from tkinter import messagebox, filedialog, simpledialog, Menu
 import datetime
 import calendar
 
@@ -36,9 +37,13 @@ class MainWindow(ctk.CTk):
         initial_appearance = self.settings.get("appearance_mode", "System")
         initial_color = self.settings.get("color_theme", "blue")
         ctk.set_appearance_mode(initial_appearance)
-        ctk.set_default_color_theme(initial_color.lower().replace(" ", "-"))
+        try:
+            ctk.set_default_color_theme(initial_color.lower().replace(" ", "-"))
+        except Exception:
+            ctk.set_default_color_theme("blue")
         from services.theme_service import ThemeManager
         ThemeManager.set_active_theme(initial_color)
+        self.configure(fg_color=ThemeManager.get("grid_bg"))
 
         self._build_ui()
 
@@ -63,24 +68,13 @@ class MainWindow(ctk.CTk):
             on_note_select=self.load_note,
             on_restore_deleted=self.restore_deleted_note,
             on_permanently_delete=self.permanently_delete_note,
-            on_new_text_note=lambda: self.prepare_new("Text"),
-            on_new_checklist=lambda: self.prepare_new("Checklist"),
             on_search=self.handle_search,
-            on_open_calendar=self.open_calendar_view,
-            on_theme_change=self.handle_theme_change,
             initial_settings=self.settings
         )
         self.sidebar.grid(row=0, column=0, sticky="nsew")
 
         self.editor = EditorFrame(
             self,
-            on_save=self.save_note,
-            on_delete=self.delete_note,
-            on_undo=self.handle_undo,
-            on_redo=self.handle_redo,
-            on_export_md=self.export_md,
-            on_export_pdf=self.export_pdf,
-            on_lock_toggle=self.toggle_note_lock
         )
         self.editor.grid(row=0, column=1, sticky="nsew", padx=20, pady=20)
 
@@ -90,6 +84,58 @@ class MainWindow(ctk.CTk):
             self.load_note(restore_note_id)
         else:
             self.prepare_new("Text")
+            
+        self._build_menu()
+
+    def _menu_save_note(self):
+        if hasattr(self, "editor"):
+            self.save_note(self.editor.get_data(), self.editor.current_note_type)
+
+    def _build_menu(self):
+        menubar = Menu(self)
+        
+        # --- File Menu ---
+        file_menu = Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Tạo Text Note", command=lambda: self.prepare_new("Text"))
+        file_menu.add_command(label="Tạo Checklist", command=lambda: self.prepare_new("Checklist"))
+        file_menu.add_separator()
+        file_menu.add_command(label="Lưu Ghi Chú", command=self._menu_save_note)
+        file_menu.add_command(label="Xóa Ghi Chú", command=self.delete_note)
+        file_menu.add_separator()
+        file_menu.add_command(label="Xuất Markdown", command=self.export_md)
+        file_menu.add_command(label="Xuất PDF", command=self.export_pdf)
+        menubar.add_cascade(label="Tệp (File)", menu=file_menu)
+        
+        # --- Edit Menu ---
+        edit_menu = Menu(menubar, tearoff=0)
+        edit_menu.add_command(label="Hoàn tác (Undo)", command=self.handle_undo)
+        edit_menu.add_command(label="Làm lại (Redo)", command=self.handle_redo)
+        menubar.add_cascade(label="Chỉnh sửa (Edit)", menu=edit_menu)
+        
+        # --- View Menu ---
+        view_menu = Menu(menubar, tearoff=0)
+        view_menu.add_command(label="Lịch biểu (Calendar)", command=self.open_calendar_view)
+        menubar.add_cascade(label="Xem (View)", menu=view_menu)
+        
+        # --- Options Menu ---
+        options_menu = Menu(menubar, tearoff=0)
+        options_menu.add_command(label="Khóa / Gỡ khóa Ghi Chú", command=self.toggle_note_lock)
+        options_menu.add_separator()
+        
+        appearance_menu = Menu(options_menu, tearoff=0)
+        for mode in ["System", "Light", "Dark"]:
+            appearance_menu.add_command(label=mode, command=lambda m=mode: self.handle_theme_change("appearance_mode", m))
+        options_menu.add_cascade(label="Chế độ (Appearance)", menu=appearance_menu)
+        
+        from services.theme_service import ThemeManager
+        theme_menu = Menu(options_menu, tearoff=0)
+        for t in ThemeManager.get_available_themes():
+            theme_menu.add_command(label=t, command=lambda th=t: self.handle_theme_change("color_theme", th))
+        options_menu.add_cascade(label="Chủ đề màu (Theme)", menu=theme_menu)
+        
+        menubar.add_cascade(label="Tùy chọn (Options)", menu=options_menu)
+        
+        self.config(menu=menubar)
 
     def refresh_sidebar(self):
         self.repo.purge_expired_deleted_notes(days=30)
@@ -158,8 +204,6 @@ class MainWindow(ctk.CTk):
     def prepare_new(self, note_type):
         self.current_note = None
         self.editor.set_data("", "", note_type, reminder_at=None, deadline_at=None, is_locked=False)
-        self.editor.btn_delete.configure(state="disabled")
-        self.editor.set_lock_state(enabled=False)
 
     def load_note(self, note_id):
         note_data = self.repo.get_note(note_id)
@@ -188,8 +232,6 @@ class MainWindow(ctk.CTk):
             deadline_at=self.current_note.deadline_at,
             is_locked=self.current_note.is_locked
         )
-        self.editor.btn_delete.configure(state="normal")
-        self.editor.set_lock_state(is_locked=self.current_note.is_locked, enabled=True)
 
     def save_note(self, data, note_type):
         if not data["title"]:
@@ -227,8 +269,6 @@ class MainWindow(ctk.CTk):
             return messagebox.showwarning("Lỗi", str(exc))
 
         self.refresh_sidebar()
-        self.editor.btn_delete.configure(state="normal")
-        self.editor.set_lock_state(is_locked=self.current_note.is_locked, enabled=True)
         messagebox.showinfo("Thành công", "Đã lưu ghi chú.")
 
     def delete_note(self):
@@ -284,7 +324,6 @@ class MainWindow(ctk.CTk):
 
             self.repo.update_note_security(self.current_note.id, False, None, None)
             self.current_note.set_lock_info(False, None, None)
-            self.editor.set_lock_state(False, enabled=True)
             self.refresh_sidebar()
             return messagebox.showinfo("Thành công", "Đã gỡ khóa ghi chú.")
 
@@ -302,7 +341,6 @@ class MainWindow(ctk.CTk):
         password_hash, password_salt = self.security_manager.hash_password(password_1)
         self.repo.update_note_security(self.current_note.id, True, password_hash, password_salt)
         self.current_note.set_lock_info(True, password_hash, password_salt)
-        self.editor.set_lock_state(True, enabled=True)
         self.refresh_sidebar()
         messagebox.showinfo("Thành công", "Đã khóa ghi chú. Lần mở sau sẽ cần nhập mật khẩu.")
 
@@ -349,9 +387,13 @@ class MainWindow(ctk.CTk):
         if key == "appearance_mode":
             ctk.set_appearance_mode(value)
         elif key == "color_theme":
-            ctk.set_default_color_theme(value.lower().replace(" ", "-"))
+            try:
+                ctk.set_default_color_theme(value.lower().replace(" ", "-"))
+            except Exception:
+                ctk.set_default_color_theme("blue")
             from services.theme_service import ThemeManager
             ThemeManager.set_active_theme(value)
+            self.configure(fg_color=ThemeManager.get("grid_bg"))
 
         self._build_ui(restore_note_id=restore_note_id)
 

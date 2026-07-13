@@ -40,7 +40,7 @@ class CTkColorPicker(ctk.CTkToplevel):
             self.main_frame, 
             height=60, 
             fg_color=self.selected_color,
-            border_width=2,
+            border_width=3,
             border_color=ThemeManager.get("grid_border")
         )
         self.preview.pack(fill="x", pady=(0, 15))

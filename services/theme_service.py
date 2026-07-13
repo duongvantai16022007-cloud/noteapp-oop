@@ -42,6 +42,29 @@ class ThemeManager:
         instance.load_theme(theme_name)
 
     @classmethod
+    def get_available_themes(cls):
+        try:
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            themes_dir = os.path.join(base_dir, "config", "themes")
+            if not os.path.exists(themes_dir):
+                return ["FALLBACK_NO_DIR"]
+            
+            themes = []
+            for file in os.listdir(themes_dir):
+                if file.endswith(".json"):
+                    # Convert filename to dropdown display name: e.g. "dark-blue.json" -> "dark blue"
+                    theme_name = file[:-5].replace("-", " ")
+                    themes.append(theme_name)
+            
+            themes.sort()
+            if not themes:
+                themes = ["FALLBACK_EMPTY"]
+            return themes
+        except Exception as e:
+            logging.error(f"Error getting available themes: {e}")
+            return ["FALLBACK_EXCEPTION"]
+
+    @classmethod
     def get(cls, key, default="transparent"):
         instance = cls()
         val = instance._colors.get(key, default)

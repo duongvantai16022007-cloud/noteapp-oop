@@ -8,79 +8,52 @@ class SidebarFrame(ctk.CTkFrame):
         on_note_select,
         on_restore_deleted,
         on_permanently_delete,
-        on_new_text_note,
-        on_new_checklist,
         on_search,
-        on_open_calendar,
-        on_theme_change,
         initial_settings=None
     ):
-        super().__init__(master, width=280, corner_radius=0)
+        super().__init__(master, width=280, corner_radius=0, fg_color=ThemeManager.get("popup_bg"))
         self.grid_propagate(False)
-        self.grid_rowconfigure(6, weight=2)
-        self.grid_rowconfigure(7, weight=1)
+        self.grid_rowconfigure(2, weight=2)
+        self.grid_rowconfigure(3, weight=1)
 
         self.on_note_select = on_note_select
         self.on_restore_deleted = on_restore_deleted
         self.on_permanently_delete = on_permanently_delete
-        self.on_theme_change = on_theme_change
         initial_settings = initial_settings or {}
 
         # Logo
-        ctk.CTkLabel(self, text="📝 Engraver", font=ctk.CTkFont(size=24, weight="bold")).grid(
-            row=0, column=0, padx=20, pady=(20, 10)
-        )
+        ctk.CTkLabel(
+            self, text="📝 Engraver", font=ctk.CTkFont(size=24, weight="bold"),
+            text_color=ThemeManager.get("text_primary")
+        ).grid(row=0, column=0, padx=20, pady=(20, 10))
 
         # Khung Tìm kiếm
-        self.search_entry = ctk.CTkEntry(self, placeholder_text="🔍 Tìm kiếm...")
+        self.search_entry = ctk.CTkEntry(
+            self, placeholder_text="🔍 Tìm kiếm...",
+            fg_color=ThemeManager.get("cell_bg"),
+            text_color=ThemeManager.get("text_primary"),
+            border_color=ThemeManager.get("grid_border"),
+            border_width=3
+        )
         self.search_entry.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
         self.search_entry.bind("<KeyRelease>", on_search)
 
-        # Nút tạo Text Note
-        ctk.CTkButton(self, text="📄 Tạo Text Note", command=on_new_text_note).grid(
-            row=2, column=0, padx=20, pady=(10, 5), sticky="ew"
-        )
-
-        # Nút tạo Checklist Note
-        ctk.CTkButton(self, text="☑ Tạo Checklist", fg_color=ThemeManager.get("accent_success"), hover_color=ThemeManager.get("accent_success_hover"), command=on_new_checklist).grid(
-            row=3, column=0, padx=20, pady=(5, 5), sticky="ew"
-        )
-
-        # Lịch biểu
-        ctk.CTkButton(self, text="📅 Lịch biểu", command=on_open_calendar).grid(
-            row=4, column=0, padx=20, pady=(5, 10), sticky="ew"
-        )
-
-        # Theme UI
-        self.theme_frame = ctk.CTkFrame(self)
-        self.theme_frame.grid(row=5, column=0, padx=10, pady=5, sticky="ew")
-        self.theme_frame.grid_columnconfigure(0, weight=1)
-        ctk.CTkLabel(self.theme_frame, text="🎨 Giao diện", font=ctk.CTkFont(weight="bold")).grid(
-            row=0, column=0, padx=10, pady=(8, 3), sticky="w"
-        )
-
-        self.appearance_menu = ctk.CTkOptionMenu(
-            self.theme_frame,
-            values=["System", "Light", "Dark"],
-            command=lambda value: self.on_theme_change("appearance_mode", value)
-        )
-        self.appearance_menu.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
-        self.appearance_menu.set(initial_settings.get("appearance_mode", "System"))
-
-        self.color_menu = ctk.CTkOptionMenu(
-            self.theme_frame,
-            values=["blue", "green", "dark blue"],
-            command=lambda value: self.on_theme_change("color_theme", value)
-        )
-        self.color_menu.grid(row=2, column=0, padx=10, pady=(5, 10), sticky="ew")
-        self.color_menu.set(initial_settings.get("color_theme", "blue"))
-
         # Danh sách Ghi chú
-        self.scroll_list = ctk.CTkScrollableFrame(self, label_text="Danh sách Ghi chú")
-        self.scroll_list.grid(row=6, column=0, padx=10, pady=10, sticky="nsew")
+        self.scroll_list = ctk.CTkScrollableFrame(
+            self, label_text="Danh sách Ghi chú",
+            fg_color=ThemeManager.get("cell_bg"),
+            label_fg_color="transparent",
+            label_text_color=ThemeManager.get("text_primary")
+        )
+        self.scroll_list.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
 
-        self.deleted_scroll_list = ctk.CTkScrollableFrame(self, label_text="Bị xoá gần đây")
-        self.deleted_scroll_list.grid(row=7, column=0, padx=10, pady=(0, 10), sticky="nsew")
+        self.deleted_scroll_list = ctk.CTkScrollableFrame(
+            self, label_text="Bị xoá gần đây",
+            fg_color=ThemeManager.get("cell_bg"),
+            label_fg_color="transparent",
+            label_text_color=ThemeManager.get("text_primary")
+        )
+        self.deleted_scroll_list.grid(row=3, column=0, padx=10, pady=(0, 10), sticky="nsew")
 
     def update_list(self, notes_list):
         """Vẽ lại danh sách Note."""
@@ -98,6 +71,7 @@ class SidebarFrame(ctk.CTkFrame):
                 self.scroll_list,
                 text=f"{icon} {title}{lock_icon}{reminder_icon}{deadline_icon}",
                 fg_color="transparent",
+                hover_color=ThemeManager.get("cell_bg_muted"),
                 text_color=ThemeManager.get("text_primary"),
                 anchor="w",
                 command=lambda id=note['id']: self.on_note_select(id)
@@ -109,7 +83,10 @@ class SidebarFrame(ctk.CTkFrame):
             widget.destroy()
 
         if not deleted_notes:
-            ctk.CTkLabel(self.deleted_scroll_list, text="Không có mục đã xóa").pack(padx=10, pady=10)
+            ctk.CTkLabel(
+                self.deleted_scroll_list, text="Không có mục đã xóa",
+                text_color=ThemeManager.get("text_primary")
+            ).pack(padx=10, pady=10)
             return
 
         for note in deleted_notes:
@@ -127,6 +104,7 @@ class SidebarFrame(ctk.CTkFrame):
                 row_frame,
                 text=f"↩ {label}",
                 fg_color="transparent",
+                hover_color=ThemeManager.get("cell_bg_muted"),
                 text_color=ThemeManager.get("text_primary"),
                 anchor="w",
                 command=lambda id=note['id']: self.on_restore_deleted(id)

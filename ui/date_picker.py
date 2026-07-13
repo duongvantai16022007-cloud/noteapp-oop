@@ -56,25 +56,35 @@ class CTkDatePicker(ctk.CTkToplevel):
         ).pack(side="left", padx=5)
 
         # Calendar Grid
-        self.grid_frame = ctk.CTkFrame(self, fg_color=ThemeManager.get("grid_bg"), border_width=1, border_color=ThemeManager.get("grid_border"))
+        self.grid_frame = ctk.CTkFrame(self, fg_color=ThemeManager.get("grid_bg"), border_width=2, border_color=ThemeManager.get("grid_border"))
         self.grid_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
         # Time Selection
         time_frame = ctk.CTkFrame(self, fg_color="transparent")
         time_frame.pack(fill="x", padx=20, pady=10)
         
-        ctk.CTkLabel(time_frame, text="Giờ:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(0, 10))
+        menu_kwargs = dict(
+            fg_color=ThemeManager.get("btn_secondary"),
+            button_color=ThemeManager.get("btn_secondary"),
+            button_hover_color=ThemeManager.get("btn_secondary_hover"),
+            text_color=ThemeManager.get("text_primary"),
+            dropdown_fg_color=ThemeManager.get("popup_bg"),
+            dropdown_text_color=ThemeManager.get("text_primary"),
+            dropdown_hover_color=ThemeManager.get("btn_secondary_hover")
+        )
+
+        ctk.CTkLabel(time_frame, text="Giờ:", font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(side="left", padx=(0, 10))
         
         hours = [f"{i:02d}" for i in range(24)]
         self.hour_var = ctk.StringVar(value=f"{self.selected_time.hour:02d}")
-        self.hour_menu = ctk.CTkOptionMenu(time_frame, values=hours, variable=self.hour_var, width=70)
+        self.hour_menu = ctk.CTkOptionMenu(time_frame, values=hours, variable=self.hour_var, width=70, **menu_kwargs)
         self.hour_menu.pack(side="left", padx=(0, 20))
         
-        ctk.CTkLabel(time_frame, text="Phút:", font=ctk.CTkFont(weight="bold")).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(time_frame, text="Phút:", font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(side="left", padx=(0, 10))
         
         minutes = [f"{i:02d}" for i in range(60)]
         self.minute_var = ctk.StringVar(value=f"{self.selected_time.minute:02d}")
-        self.minute_menu = ctk.CTkOptionMenu(time_frame, values=minutes, variable=self.minute_var, width=70)
+        self.minute_menu = ctk.CTkOptionMenu(time_frame, values=minutes, variable=self.minute_var, width=70, **menu_kwargs)
         self.minute_menu.pack(side="left")
 
         # Footer
@@ -83,12 +93,14 @@ class CTkDatePicker(ctk.CTkToplevel):
         
         ctk.CTkButton(
             footer, text="Đặt về hiện tại", 
-            command=self._set_now
+            command=self._set_now,
+            fg_color=ThemeManager.get("btn_secondary"), hover_color=ThemeManager.get("btn_secondary_hover"), text_color=ThemeManager.get("text_primary")
         ).pack(side="left")
         
         ctk.CTkButton(
             footer, text="Áp dụng", 
-            command=self._apply
+            command=self._apply,
+            fg_color=ThemeManager.get("accent_primary"), hover_color=ThemeManager.get("accent_primary_hover"), text_color=ThemeManager.get("text_on_accent")
         ).pack(side="right")
         
         ctk.CTkButton(
