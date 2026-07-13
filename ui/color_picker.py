@@ -1,10 +1,12 @@
 import customtkinter as ctk
+import re
 from services.theme_service import ThemeManager
 
 class CTkColorPicker(ctk.CTkToplevel):
     def __init__(self, master, title="Chọn màu", initial_color="#000000", on_select=None):
         super().__init__(master)
         
+        self.result = None
         self.on_select_callback = on_select
         self.selected_color = initial_color
         
@@ -29,6 +31,13 @@ class CTkColorPicker(ctk.CTkToplevel):
         
         self._build_ui()
         self.deiconify()
+
+    @staticmethod
+    def _is_valid_hex(color_str):
+        """Validate a 7-character hex color: # followed by 6 hex digits."""
+        if not color_str or not isinstance(color_str, str):
+            return False
+        return bool(re.match(r'^#[0-9a-fA-F]{6}$', color_str))
 
     def _build_ui(self):
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
@@ -84,23 +93,36 @@ class CTkColorPicker(ctk.CTkToplevel):
         self.btn_apply.pack(side="right")
 
     def set_color(self, color):
+        """Auto-apply a preset color: set result and close the picker."""
         self.selected_color = color
         self.hex_entry.delete(0, "end")
         self.hex_entry.insert(0, color)
+        self.preview.configure(fg_color=color)
+        self.hex_entry.configure(border_color=ThemeManager.get("grid_border"))
+        # Auto-apply on preset click
+        self.result = color
+        if self.on_select_callback:
+            self.on_select_callback(color)
+        self.destroy()
 
     def _on_hex_change(self, event):
         val = self.hex_entry.get().strip()
-        if len(val) == 7 and val.startswith("#"):
+        if self._is_valid_hex(val):
             try:
                 self.preview.configure(fg_color=val)
                 self.selected_color = val
+                self.hex_entry.configure(border_color=ThemeManager.get("grid_border"))
             except Exception:
                 pass
+        else:
+            self.hex_entry.configure(border_color="#ef4444")
 
     def apply(self):
         val = self.hex_entry.get().strip()
-        if not val.startswith("#") or len(val) != 7:
+        if not self._is_valid_hex(val):
+            self.hex_entry.configure(border_color="#ef4444")
             return
+        self.result = val
         if self.on_select_callback:
             self.on_select_callback(val)
         self.destroy()

@@ -19,11 +19,15 @@ class EditorFrame(ctk.CTkFrame):
 
         self.current_note_type = "Text"  # Mặc định là Text
         self.checklist_vars = []  # Lưu trạng thái các ô tick
-        self._undo_enabled = False
         self._editor_default_height = 420
         self._font_cache = {}
+        self._font_cache_initialized = set()  # Track which tags have had Font objects created
         self.zoom_factor = 1.0
         self._zoom_job = None
+
+        # Placeholder text constants for Fix 8
+        self._reminder_placeholder = "YYYY-MM-DD HH:MM"
+        self._deadline_placeholder = "YYYY-MM-DD HH:MM"
 
         # Toolbar: Chứa định dạng cơ bản
         self.toolbar = ctk.CTkFrame(self, fg_color="transparent", height=40)
@@ -109,6 +113,8 @@ class EditorFrame(ctk.CTkFrame):
         self.document_zoom_slider.set(100)
         self.document_zoom_slider.grid(row=0, column=7, padx=(0, 8), sticky="w")
         self.document_zoom_slider.bind("<ButtonRelease-1>", self.on_zoom_release)
+        # Fix 7: Keyboard zoom support — also call on_zoom_release via a command
+        self.document_zoom_slider.configure(command=lambda value: self.on_zoom_release(None))
 
         # Tiêu đề
         self.entry_title = ctk.CTkEntry(
@@ -147,12 +153,12 @@ class EditorFrame(ctk.CTkFrame):
         )
 
         ctk.CTkLabel(self.meta_frame, text="🔔 Nhắc lúc", text_color=ThemeManager.get("text_primary")).grid(row=0, column=1, padx=(0, 8), sticky="e")
-        self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM", width=140, **entry_kwargs)
+        self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text=self._reminder_placeholder, width=140, **entry_kwargs)
         self.entry_reminder.grid(row=0, column=2, padx=(0, 5), sticky="e")
         ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_reminder, "Chọn thời gian nhắc"), **btn_kwargs).grid(row=0, column=3, padx=(0, 15), sticky="e")
 
         ctk.CTkLabel(self.meta_frame, text="📌 Deadline", text_color=ThemeManager.get("text_primary")).grid(row=0, column=4, padx=(0, 8), sticky="e")
-        self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text="YYYY-MM-DD HH:MM", width=140, **entry_kwargs)
+        self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text=self._deadline_placeholder, width=140, **entry_kwargs)
         self.entry_deadline.grid(row=0, column=5, padx=(0, 5), sticky="e")
         ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_deadline, "Chọn deadline"), **btn_kwargs).grid(row=0, column=6, padx=(0, 0), sticky="e")
         self.meta_frame.grid_columnconfigure((1, 6), weight=0)
@@ -194,6 +200,36 @@ class EditorFrame(ctk.CTkFrame):
         self._text_widget().bind("<Command-z>", lambda event=None: self.undo_text())
         self._text_widget().bind("<Command-Shift-z>", lambda event=None: self.redo_text())
 
+        # Fix 5: Update toolbar state on cursor movement / selection change
+        widget = self._text_widget()
+        widget.bind("<<Selection>>", self._on_cursor_moved)
+        widget.bind("<KeyRelease>", self._on_cursor_moved)
+        widget.bind("<ButtonRelease-1>", self._on_cursor_moved)
+
+    # =========================
+    # Fix 5: Cursor tracking for toolbar state
+    # =========================
+    def _on_cursor_moved(self, event=None):
+        """Update toolbar controls to reflect the style at the current cursor position."""
+        if self.current_note_type != "Text":
+            return
+        try:
+            widget = self._text_widget()
+            cursor = widget.index("insert")
+            style = self._style_at_index(cursor)
+
+            # Update font family menu
+            family = style.get("family", "Arial")
+            if family != self.font_family_menu.get():
+                self.font_family_menu.set(family)
+
+            # Update font size menu
+            size = str(style.get("size", 15))
+            if size != self.font_size_menu.get():
+                self.font_size_menu.set(size)
+        except Exception:
+            pass
+
     # =========================
     # Rich text cơ bản B/I
     # =========================
@@ -218,8 +254,12 @@ class EditorFrame(ctk.CTkFrame):
         )
         widget = self._text_widget()
         widget.configure(font=self._text_font)
-        widget.tag_configure("sel", background="#2563eb", foreground="white")
-        widget.tag_raise("sel")
+        # Don't set foreground="white" on sel — that would mask any color/highlight
+        # applied to selected text. Only set background so the selection is visible.
+        widget.tag_configure("sel", background="#2563eb")
+        # Don't tag_raise("sel") above fmt| tags — let fmt| tags keep their
+        # foreground colors even when selected. The selection background alone
+        # is sufficient visual feedback.
 
     def _default_style(self):
         return dict(self._base_style)
@@ -236,11 +276,15 @@ class EditorFrame(ctk.CTkFrame):
         normalized["highlight"] = str(normalized.get("highlight") or "")
         return normalized
 
+    def _sanitize_tag_part(self, value):
+        """Sanitize a tag name component by replacing dangerous characters."""
+        return str(value).replace("|", "_").replace(" ", "_").replace("\n", "_")
+
     def _style_tag_name(self, style):
         style = self._normalize_style(style)
-        family = style["family"].replace("|", "_").replace(" ", "_")
-        foreground = style["foreground"] or "none"
-        highlight = style["highlight"] or "none"
+        family = self._sanitize_tag_part(style["family"])
+        foreground = self._sanitize_tag_part(style["foreground"] or "none")
+        highlight = self._sanitize_tag_part(style["highlight"] or "none")
         return f"fmt|{family}|{style['size']}|{int(style['bold'])}|{int(style['italic'])}|{int(style['underline'])}|{foreground}|{highlight}"
 
     def _style_from_tag_name(self, tag_name):
@@ -264,6 +308,15 @@ class EditorFrame(ctk.CTkFrame):
         widget = self._text_widget()
         normalized = self._normalize_style(style)
         zoom_mult = getattr(self, "zoom_factor", 1.0)
+
+        if tag_name in self._font_cache_initialized:
+            # Tag already has a Font; just reconfigure if zoom changed
+            font = self._font_cache.get(tag_name)
+            if font:
+                new_size = int(normalized["size"] * zoom_mult)
+                font.configure(size=new_size)
+            return
+
         font = tkfont.Font(
             family=normalized["family"],
             size=int(normalized["size"] * zoom_mult),
@@ -277,11 +330,15 @@ class EditorFrame(ctk.CTkFrame):
         if normalized["highlight"]:
             kwargs["background"] = normalized["highlight"]
         self._font_cache[tag_name] = font
+        self._font_cache_initialized.add(tag_name)
         widget.tag_configure(tag_name, **kwargs)
 
     def _style_at_index(self, index):
         widget = self._text_widget()
-        for tag_name in widget.tag_names(index):
+        # tag_names(index) returns tags lowest-priority first, but we want the
+        # visually-active (highest-priority) fmt tag — so iterate in reverse.
+        all_tags = widget.tag_names(index)
+        for tag_name in reversed(all_tags):
             style = self._style_from_tag_name(tag_name)
             if style is not None:
                 return style
@@ -323,12 +380,37 @@ class EditorFrame(ctk.CTkFrame):
             index = next_index
 
     def _apply_style_updates(self, start, end, updates):
+        """Apply style updates by batching contiguous runs with the same resulting style."""
         widget = self._text_widget()
-        for char_start, char_end in self._iterate_char_ranges(start, end):
-            style = self._normalize_style(self._style_at_index(char_start))
+        # First pass: determine the target style for each character position
+        index = start
+        runs = []  # list of (run_start, run_end, target_style)
+        while widget.compare(index, "<", end):
+            style = self._normalize_style(self._style_at_index(index))
             style.update(updates)
-            self._remove_style_tags(char_start, char_end)
-            self._apply_style_tag_to_range(char_start, char_end, style)
+            target_tag = self._style_tag_name(style)
+            run_start = index
+            # Advance while the target style stays the same
+            while widget.compare(index, "<", end):
+                next_style = self._normalize_style(self._style_at_index(index))
+                next_style.update(updates)
+                if self._style_tag_name(next_style) != target_tag:
+                    break
+                index = widget.index(f"{index}+1c")
+            run_end = index
+            runs.append((run_start, run_end, style))
+
+        # Second pass: apply each run as a single tag_add
+        for run_start, run_end, style in runs:
+            self._remove_style_tags(run_start, run_end)
+            self._apply_style_tag_to_range(run_start, run_end, style)
+
+        # Push an undo separator so formatting changes are undoable
+        try:
+            widget.edit_separator()
+        except Exception:
+            pass
+
         widget.tag_raise("sel")
 
     def apply_text_style(self, style_name):
@@ -357,6 +439,9 @@ class EditorFrame(ctk.CTkFrame):
         start, end = self._get_selected_or_current_word_range()
         if start and end:
             self._apply_style_updates(start, end, {"family": family_name})
+            # Fix 6: Clear selection highlight and refocus after font change
+            self._text_widget().tag_remove("sel", "1.0", "end")
+            self._text_widget().focus_set()
 
     def apply_font_size(self, size_value):
         if self.current_note_type != "Text":
@@ -364,32 +449,49 @@ class EditorFrame(ctk.CTkFrame):
         start, end = self._get_selected_or_current_word_range()
         if start and end:
             self._apply_style_updates(start, end, {"size": int(size_value)})
+            # Fix 6: Clear selection highlight and refocus after size change
+            self._text_widget().tag_remove("sel", "1.0", "end")
+            self._text_widget().focus_set()
 
     def pick_text_color(self):
         if self.current_note_type != "Text":
             return
+        start, end = self._get_selected_or_current_word_range()
+        if not start or not end:
+            return
         from ui.color_picker import CTkColorPicker
-        picker = CTkColorPicker(self, initial_color="#000000" if ctk.get_appearance_mode() == "Light" else "#ffffff", title="Chọn màu chữ")
+        picker = CTkColorPicker(
+            self,
+            initial_color="#000000" if ctk.get_appearance_mode() == "Light" else "#ffffff",
+            title="Chọn màu chữ",
+        )
         self.wait_window(picker)
         color = picker.result
         if not color:
             return
-        start, end = self._get_selected_or_current_word_range()
-        if start and end:
-            self._apply_style_updates(start, end, {"foreground": color})
+        self._apply_style_updates(start, end, {"foreground": color})
+        self._text_widget().tag_remove("sel", "1.0", "end")
+        self._text_widget().focus_set()
 
     def pick_highlight_color(self):
         if self.current_note_type != "Text":
             return
+        start, end = self._get_selected_or_current_word_range()
+        if not start or not end:
+            return
         from ui.color_picker import CTkColorPicker
-        picker = CTkColorPicker(self, initial_color="#fcc419", title="Chọn màu highlight")
+        picker = CTkColorPicker(
+            self,
+            initial_color="#fcc419",
+            title="Chọn màu highlight",
+        )
         self.wait_window(picker)
         color = picker.result
         if not color:
             return
-        start, end = self._get_selected_or_current_word_range()
-        if start and end:
-            self._apply_style_updates(start, end, {"highlight": color})
+        self._apply_style_updates(start, end, {"highlight": color})
+        self._text_widget().tag_remove("sel", "1.0", "end")
+        self._text_widget().focus_set()
 
     def on_zoom_release(self, event):
         value = self.document_zoom_slider.get()
@@ -435,8 +537,22 @@ class EditorFrame(ctk.CTkFrame):
             })
         self._apply_style_tag_to_range(start, end, style)
 
+    def _clear_font_cache(self):
+        """Destroy all cached Font objects and clear the cache (Fix 3)."""
+        for font in self._font_cache.values():
+            try:
+                font.destroy()
+            except Exception:
+                pass
+        self._font_cache.clear()
+        self._font_cache_initialized.clear()
+
     def _render_content(self, content):
         widget = self._text_widget()
+
+        # Fix 3: Clean up old font handles before rendering new content
+        self._clear_font_cache()
+
         widget.delete("1.0", "end")
         self._remove_style_tags("1.0", "end")
 
@@ -687,6 +803,15 @@ class EditorFrame(ctk.CTkFrame):
             except Exception:
                 pass
 
+    def _is_placeholder(self, entry, placeholder_text):
+        """Check if an entry currently shows its placeholder text (Fix 8)."""
+        value = entry.get().strip()
+        if not value:
+            return True
+        if value == placeholder_text:
+            return True
+        return False
+
     def get_data(self):
         title = self.entry_title.get().strip()
         if self.current_note_type == "Checklist":
@@ -697,9 +822,18 @@ class EditorFrame(ctk.CTkFrame):
         else:
             content = self._serialize_content()
 
+        # Fix 8: Guard against placeholder text leaking into saved data
+        reminder_raw = self.entry_reminder.get().strip()
+        if self._is_placeholder(self.entry_reminder, self._reminder_placeholder):
+            reminder_raw = ""
+
+        deadline_raw = self.entry_deadline.get().strip()
+        if self._is_placeholder(self.entry_deadline, self._deadline_placeholder):
+            deadline_raw = ""
+
         return {
             "title": title,
             "content": content,
-            "reminder_at": self.entry_reminder.get().strip(),
-            "deadline_at": self.entry_deadline.get().strip()
+            "reminder_at": reminder_raw,
+            "deadline_at": deadline_raw
         }

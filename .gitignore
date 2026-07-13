@@ -52,5 +52,5 @@ Desktop.ini
 .LSOverride
 
 pyproject.toml
-README.md
 uv.lock
+*.md
