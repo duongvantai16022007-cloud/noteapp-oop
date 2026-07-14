@@ -32,7 +32,7 @@ class MainWindow(ctk.CTk):
         self.calendar_month = datetime.date.today().replace(day=1)
         self._ui_built = False
 
-        self.title("Engraver Note App - Full Features")
+        self.title("ENGRAVER")
         self.geometry("1200x760")
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
