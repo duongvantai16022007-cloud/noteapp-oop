@@ -128,14 +128,19 @@ class ExportService:
             file.write(self._markdown_content(note, file_path))
 
     @staticmethod
-    def _write_pdf_text(pdf, text):
-        if text:
-            pdf.multi_cell(0, 7, text)
+    def _pdf_multi_cell(pdf, line_height, text):
+        """Write a full-width cell without inheriting fpdf2's right-edge cursor."""
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(0, line_height, str(text))
+        pdf.set_x(pdf.l_margin)
 
-    @staticmethod
-    def _write_pdf_media_label(pdf, font_family, label):
+    def _write_pdf_text(self, pdf, text):
+        if text:
+            self._pdf_multi_cell(pdf, 7, text)
+
+    def _write_pdf_media_label(self, pdf, font_family, label):
         pdf.set_font(font_family, size=10)
-        pdf.multi_cell(0, 6, label)
+        self._pdf_multi_cell(pdf, 6, label)
         pdf.set_font(font_family, size=12)
 
     def _write_pdf_image(self, pdf, attachment, font_family, temp_dir, index):
@@ -228,12 +233,12 @@ class ExportService:
         font_family = self._set_unicode_font(pdf)
 
         pdf.set_font(font_family, size=16)
-        pdf.multi_cell(0, 10, note.title)
+        self._pdf_multi_cell(pdf, 10, note.title)
         pdf.set_font(font_family, size=12)
         if note.deadline_at:
-            pdf.multi_cell(0, 7, f"Deadline: {note.deadline_at}")
+            self._pdf_multi_cell(pdf, 7, f"Deadline: {note.deadline_at}")
         if note.reminder_at:
-            pdf.multi_cell(0, 7, f"Reminder: {note.reminder_at}")
+            self._pdf_multi_cell(pdf, 7, f"Reminder: {note.reminder_at}")
 
         with tempfile.TemporaryDirectory(prefix="noteapp-pdf-") as temp_dir:
             self._write_pdf_content(pdf, note, font_family, temp_dir)

@@ -17,6 +17,32 @@ class DummyNote:
 
 
 class MediaServiceTests(unittest.TestCase):
+    def test_pdf_multi_cell_resets_cursor_to_left_margin(self):
+        class CursorSensitivePdf:
+            l_margin = 10
+
+            def __init__(self):
+                self.x = 999
+                self.calls = []
+
+            def set_x(self, value):
+                self.x = value
+
+            def multi_cell(self, width, height, text):
+                if self.x != self.l_margin:
+                    raise RuntimeError("Not enough horizontal space to render a single character")
+                self.calls.append((width, height, text))
+                self.x = 999
+
+        pdf = CursorSensitivePdf()
+        service = ExportService()
+
+        service._pdf_multi_cell(pdf, 10, "Title")
+        service._pdf_multi_cell(pdf, 7, "Content")
+
+        self.assertEqual(pdf.x, pdf.l_margin)
+        self.assertEqual(len(pdf.calls), 2)
+
     def test_import_file_copies_media_into_managed_directory(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
