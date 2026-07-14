@@ -1,6 +1,7 @@
 import customtkinter as ctk
 import re
 from services.theme_service import ThemeManager
+from services.translation_service import TranslationService
 
 class CTkColorPicker(ctk.CTkToplevel):
     def __init__(self, master, title="Chọn màu", initial_color="#000000", on_select=None):
@@ -43,7 +44,7 @@ class CTkColorPicker(ctk.CTkToplevel):
         self.main_frame = ctk.CTkFrame(self, fg_color="transparent")
         self.main_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        ctk.CTkLabel(self.main_frame, text="Màu hiện tại:", font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(anchor="w", pady=(0, 5))
+        ctk.CTkLabel(self.main_frame, text=TranslationService.get("colorpicker.current_color"), font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(anchor="w", pady=(0, 5))
         
         self.preview = ctk.CTkFrame(
             self.main_frame, 
@@ -54,7 +55,7 @@ class CTkColorPicker(ctk.CTkToplevel):
         )
         self.preview.pack(fill="x", pady=(0, 15))
         
-        ctk.CTkLabel(self.main_frame, text="Bảng màu có sẵn:", font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(anchor="w", pady=(0, 10))
+        ctk.CTkLabel(self.main_frame, text=TranslationService.get("colorpicker.presets"), font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(anchor="w", pady=(0, 10))
         
         grid = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         grid.pack(fill="x", pady=(0, 15))
@@ -77,7 +78,7 @@ class CTkColorPicker(ctk.CTkToplevel):
         self.hex_frame = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.hex_frame.pack(fill="x", pady=(10, 0))
         
-        ctk.CTkLabel(self.hex_frame, text="Mã Hex:", font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(self.hex_frame, text=TranslationService.get("colorpicker.hex_label"), font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(side="left", padx=(0, 10))
         self.hex_entry = ctk.CTkEntry(self.hex_frame, width=120)
         self.hex_entry.insert(0, self.selected_color)
         self.hex_entry.pack(side="left")
@@ -86,10 +87,10 @@ class CTkColorPicker(ctk.CTkToplevel):
         self.footer = ctk.CTkFrame(self.main_frame, fg_color="transparent")
         self.footer.pack(fill="x", side="bottom", pady=(20, 0))
         
-        self.btn_cancel = ctk.CTkButton(self.footer, text="Hủy", fg_color=ThemeManager.get("btn_cancel"), hover_color=ThemeManager.get("btn_cancel_hover"), text_color=ThemeManager.get("text_primary"), width=100, command=self.destroy)
+        self.btn_cancel = ctk.CTkButton(self.footer, text=TranslationService.get("colorpicker.cancel"), fg_color=ThemeManager.get("btn_cancel"), hover_color=ThemeManager.get("btn_cancel_hover"), text_color=ThemeManager.get("text_primary"), width=100, command=self.destroy)
         self.btn_cancel.pack(side="right", padx=(10, 0))
         
-        self.btn_apply = ctk.CTkButton(self.footer, text="Áp dụng", fg_color=ThemeManager.get("accent_primary"), hover_color=ThemeManager.get("accent_primary_hover"), text_color=ThemeManager.get("text_on_accent"), width=100, command=self.apply)
+        self.btn_apply = ctk.CTkButton(self.footer, text=TranslationService.get("colorpicker.apply"), fg_color=ThemeManager.get("accent_primary"), hover_color=ThemeManager.get("accent_primary_hover"), text_color=ThemeManager.get("text_on_accent"), width=100, command=self.apply)
         self.btn_apply.pack(side="right")
 
     def set_color(self, color):

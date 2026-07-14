@@ -8,6 +8,7 @@ from datetime import datetime
 from ui.date_picker import CTkDatePicker
 from ui.color_picker import CTkColorPicker
 from services.theme_service import ThemeManager
+from services.translation_service import TranslationService
 
 class EditorFrame(ctk.CTkFrame):
     def __init__(
@@ -28,8 +29,8 @@ class EditorFrame(ctk.CTkFrame):
         self._content_search_matches = []
         self._content_search_index = -1
 
-        self._reminder_placeholder = "YYYY-MM-DD HH:MM"
-        self._deadline_placeholder = "YYYY-MM-DD HH:MM"
+        self._reminder_placeholder = TranslationService.get("editor.reminder_placeholder")
+        self._deadline_placeholder = TranslationService.get("editor.deadline_placeholder")
 
         # Toolbar
         self.toolbar = ctk.CTkFrame(self, fg_color="transparent", height=40)
@@ -108,7 +109,7 @@ class EditorFrame(ctk.CTkFrame):
             dropdown_hover_color=ThemeManager.get("btn_secondary_hover")
         )
 
-        ctk.CTkLabel(self.format_bar, text="Font", text_color=ThemeManager.get("text_primary")).grid(row=0, column=0, padx=(0, 6), sticky="w")
+        ctk.CTkLabel(self.format_bar, text=TranslationService.get("editor.font"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=0, padx=(0, 6), sticky="w")
         self.font_family_menu = ctk.CTkOptionMenu(
             self.format_bar, values=["Arial", "Helvetica", "Times New Roman", "Georgia", "Verdana", "Courier New"],
             width=140, command=self.apply_font_family, **menu_kwargs
@@ -116,7 +117,7 @@ class EditorFrame(ctk.CTkFrame):
         self.font_family_menu.set("Arial")
         self.font_family_menu.grid(row=0, column=1, padx=(0, 10), sticky="w")
 
-        ctk.CTkLabel(self.format_bar, text="Size", text_color=ThemeManager.get("text_primary")).grid(row=0, column=2, padx=(0, 6), sticky="w")
+        ctk.CTkLabel(self.format_bar, text=TranslationService.get("editor.size"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=2, padx=(0, 6), sticky="w")
         self.font_size_menu = ctk.CTkOptionMenu(
             self.format_bar, values=["10", "11", "12", "14", "16", "18", "20", "24", "28", "32"],
             width=72, command=self.apply_font_size, **menu_kwargs
@@ -124,10 +125,10 @@ class EditorFrame(ctk.CTkFrame):
         self.font_size_menu.set("15")
         self.font_size_menu.grid(row=0, column=3, padx=(0, 10), sticky="w")
 
-        ctk.CTkButton(self.format_bar, text="Màu chữ", width=88, command=self.pick_text_color, **btn_kwargs).grid(row=0, column=4, padx=(0, 8), sticky="w")
-        ctk.CTkButton(self.format_bar, text="Highlight", width=90, command=self.pick_highlight_color, **btn_kwargs).grid(row=0, column=5, padx=(0, 8), sticky="w")
+        ctk.CTkButton(self.format_bar, text=TranslationService.get("editor.text_color"), width=88, command=self.pick_text_color, **btn_kwargs).grid(row=0, column=4, padx=(0, 8), sticky="w")
+        ctk.CTkButton(self.format_bar, text=TranslationService.get("editor.highlight"), width=90, command=self.pick_highlight_color, **btn_kwargs).grid(row=0, column=5, padx=(0, 8), sticky="w")
 
-        ctk.CTkLabel(self.format_bar, text="Zoom", text_color=ThemeManager.get("text_primary")).grid(row=0, column=6, padx=(0, 6), sticky="w")
+        ctk.CTkLabel(self.format_bar, text=TranslationService.get("editor.zoom"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=6, padx=(0, 6), sticky="w")
         self.document_zoom_slider = ctk.CTkSlider(self.format_bar, from_=50, to=200, number_of_steps=30, width=130)
         self.document_zoom_slider.set(100)
         self.document_zoom_slider.grid(row=0, column=7, padx=(0, 8), sticky="w")
@@ -136,7 +137,7 @@ class EditorFrame(ctk.CTkFrame):
 
         # Title
         self.entry_title = ctk.CTkEntry(
-            self, placeholder_text="Nhập tiêu đề...",
+            self, placeholder_text=TranslationService.get("editor.title_placeholder"),
             font=ctk.CTkFont(size=24, weight="bold"),
             border_width=0, fg_color="transparent",
             text_color=ThemeManager.get("text_primary")
@@ -165,22 +166,22 @@ class EditorFrame(ctk.CTkFrame):
             border_width=3
         )
 
-        ctk.CTkLabel(self.meta_frame, text="🔔 Nhắc lúc", text_color=ThemeManager.get("text_primary")).grid(row=0, column=1, padx=(0, 8), sticky="e")
+        ctk.CTkLabel(self.meta_frame, text=TranslationService.get("editor.reminder_label"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=1, padx=(0, 8), sticky="e")
         self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text=self._reminder_placeholder, width=140, **entry_kwargs)
         self.entry_reminder.grid(row=0, column=2, padx=(0, 5), sticky="e")
-        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_reminder, "Chọn thời gian nhắc"), **btn_kwargs).grid(row=0, column=3, padx=(0, 15), sticky="e")
+        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_reminder, TranslationService.get("editor.date_picker_reminder")), **btn_kwargs).grid(row=0, column=3, padx=(0, 15), sticky="e")
 
-        ctk.CTkLabel(self.meta_frame, text="📌 Deadline", text_color=ThemeManager.get("text_primary")).grid(row=0, column=4, padx=(0, 8), sticky="e")
+        ctk.CTkLabel(self.meta_frame, text=TranslationService.get("editor.deadline_label"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=4, padx=(0, 8), sticky="e")
         self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text=self._deadline_placeholder, width=140, **entry_kwargs)
         self.entry_deadline.grid(row=0, column=5, padx=(0, 5), sticky="e")
-        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_deadline, "Chọn deadline"), **btn_kwargs).grid(row=0, column=6, padx=(0, 0), sticky="e")
+        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_deadline, TranslationService.get("editor.date_picker_deadline")), **btn_kwargs).grid(row=0, column=6, padx=(0, 0), sticky="e")
         self.meta_frame.grid_columnconfigure((1, 6), weight=0)
 
         # Checklist add-item bar
         self.add_item_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.new_item_entry = ctk.CTkEntry(self.add_item_frame, placeholder_text="Thêm công việc mới...", **entry_kwargs)
+        self.new_item_entry = ctk.CTkEntry(self.add_item_frame, placeholder_text=TranslationService.get("editor.checklist_placeholder"), **entry_kwargs)
         self.new_item_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        ctk.CTkButton(self.add_item_frame, text="Thêm", width=80, command=self.add_checklist_item,
+        ctk.CTkButton(self.add_item_frame, text=TranslationService.get("editor.checklist_add"), width=80, command=self.add_checklist_item,
                        fg_color=ThemeManager.get("accent_primary"),
                        hover_color=ThemeManager.get("accent_primary_hover"),
                        text_color=ThemeManager.get("text_on_accent")).pack(side="right")
@@ -567,7 +568,7 @@ class EditorFrame(ctk.CTkFrame):
         picker = CTkColorPicker(
             self,
             initial_color="#000000" if ctk.get_appearance_mode() == "Light" else "#ffffff",
-            title="Chọn màu chữ",
+            title=TranslationService.get("editor.text_color"),
         )
         self.wait_window(picker)
         color = picker.result
@@ -587,7 +588,7 @@ class EditorFrame(ctk.CTkFrame):
         picker = CTkColorPicker(
             self,
             initial_color="#fcc419",
-            title="Chọn màu highlight",
+            title=TranslationService.get("editor.highlight"),
         )
         self.wait_window(picker)
         color = picker.result

@@ -2,6 +2,7 @@ import customtkinter as ctk
 import datetime
 import calendar
 from services.theme_service import ThemeManager
+from services.translation_service import TranslationService
 
 class CTkCalendarView(ctk.CTkToplevel):
     def __init__(self, master, repo, on_open_note):
@@ -12,7 +13,7 @@ class CTkCalendarView(ctk.CTkToplevel):
         self.calendar_month = datetime.date.today().replace(day=1)
 
         self.withdraw()  # Hide immediately to prevent alignment jumps
-        self.title("📅 Calendar View - Lịch biểu ghi chú")
+        self.title(TranslationService.get("calendar.title"))
         self.geometry("950x650")
         
         # Dual-theme window background
@@ -40,7 +41,7 @@ class CTkCalendarView(ctk.CTkToplevel):
         
         ctk.CTkButton(
             header, 
-            text="← Tháng trước", 
+            text=TranslationService.get("calendar.prev"), 
             width=120, 
             fg_color=ThemeManager.get("btn_secondary"),
             text_color=ThemeManager.get("text_primary"),
@@ -50,7 +51,7 @@ class CTkCalendarView(ctk.CTkToplevel):
         
         ctk.CTkButton(
             header, 
-            text="Tháng sau →", 
+            text=TranslationService.get("calendar.next"), 
             width=120, 
             fg_color=ThemeManager.get("btn_secondary"),
             text_color=ThemeManager.get("text_primary"),
@@ -60,7 +61,7 @@ class CTkCalendarView(ctk.CTkToplevel):
 
         note = ctk.CTkLabel(
             self,
-            text="🔔 = Reminder, 📌 = Deadline. Bấm vào ghi chú trong lịch để mở.",
+            text=TranslationService.get("calendar.hint"),
             text_color=ThemeManager.get("text_secondary")
         )
         note.pack(fill="x", padx=15, pady=(0, 8))
@@ -106,9 +107,9 @@ class CTkCalendarView(ctk.CTkToplevel):
         for row in range(7):
             self.grid_frame.grid_rowconfigure(row, weight=1, uniform="calendar")
 
-        self.title_label.configure(text=f"Tháng {self.calendar_month.month:02d}/{self.calendar_month.year}")
+        self.title_label.configure(text=TranslationService.get("calendar.month_label", self.calendar_month.month, self.calendar_month.year))
 
-        weekdays = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+        weekdays = TranslationService.weekdays()
         for col, day_name in enumerate(weekdays):
             ctk.CTkLabel(
                 self.grid_frame, 
@@ -141,7 +142,7 @@ class CTkCalendarView(ctk.CTkToplevel):
                 ctk.CTkLabel(cell, text=str(day.day), anchor="w", text_color=day_color).pack(fill="x", padx=6, pady=(4, 1))
 
                 for icon, note in events_by_date.get(day, [])[:3]:
-                    title = note.get("title", "Không có tiêu đề")
+                    title = note.get("title", TranslationService.get("calendar.no_title"))
                     if len(title) > 13:
                         title = title[:13] + "…"
                     ctk.CTkButton(
@@ -160,7 +161,7 @@ class CTkCalendarView(ctk.CTkToplevel):
                 if extra_count:
                     ctk.CTkLabel(
                         cell, 
-                        text=f"+{extra_count} mục khác", 
+                        text=TranslationService.get("calendar.extra", extra_count), 
                         text_color=ThemeManager.get("text_extra"), 
                         font=ctk.CTkFont(size=10)
                     ).pack(fill="x", padx=6)

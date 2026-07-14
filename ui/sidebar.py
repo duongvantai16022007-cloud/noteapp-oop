@@ -1,5 +1,6 @@
 import customtkinter as ctk
 from services.theme_service import ThemeManager
+from services.translation_service import TranslationService
 
 class SidebarFrame(ctk.CTkFrame):
     def __init__(
@@ -23,13 +24,13 @@ class SidebarFrame(ctk.CTkFrame):
 
         # Logo
         ctk.CTkLabel(
-            self, text="📝 Engraver", font=ctk.CTkFont(size=24, weight="bold"),
+            self, text=TranslationService.get("sidebar.logo"), font=ctk.CTkFont(size=24, weight="bold"),
             text_color=ThemeManager.get("text_primary")
         ).grid(row=0, column=0, padx=20, pady=(20, 10))
 
-        # Khung Tìm kiếm
+        # Search
         self.search_entry = ctk.CTkEntry(
-            self, placeholder_text="🔍 Tìm kiếm...",
+            self, placeholder_text=TranslationService.get("sidebar.search_placeholder"),
             fg_color=ThemeManager.get("cell_bg"),
             text_color=ThemeManager.get("text_primary"),
             border_color=ThemeManager.get("grid_border"),
@@ -38,9 +39,9 @@ class SidebarFrame(ctk.CTkFrame):
         self.search_entry.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
         self.search_entry.bind("<KeyRelease>", on_search)
 
-        # Danh sách Ghi chú
+        # Note list
         self.scroll_list = ctk.CTkScrollableFrame(
-            self, label_text="Danh sách Ghi chú",
+            self, label_text=TranslationService.get("sidebar.note_list"),
             fg_color=ThemeManager.get("cell_bg"),
             label_fg_color="transparent",
             label_text_color=ThemeManager.get("text_primary")
@@ -48,7 +49,7 @@ class SidebarFrame(ctk.CTkFrame):
         self.scroll_list.grid(row=2, column=0, padx=10, pady=10, sticky="nsew")
 
         self.deleted_scroll_list = ctk.CTkScrollableFrame(
-            self, label_text="Bị xoá gần đây",
+            self, label_text=TranslationService.get("sidebar.deleted_list"),
             fg_color=ThemeManager.get("cell_bg"),
             label_fg_color="transparent",
             label_text_color=ThemeManager.get("text_primary")
@@ -61,7 +62,7 @@ class SidebarFrame(ctk.CTkFrame):
             widget.destroy()
 
         for note in notes_list:
-            title = note.get('title', 'Không có tiêu đề')
+            title = note.get('title', TranslationService.get("sidebar.no_title"))
             icon = "☑" if str(note.get('type', '')).lower() == 'checklist' else "📄"
             lock_icon = " 🔒" if note.get('is_locked') else ""
             reminder_icon = " 🔔" if note.get('reminder_at') else ""
@@ -84,13 +85,13 @@ class SidebarFrame(ctk.CTkFrame):
 
         if not deleted_notes:
             ctk.CTkLabel(
-                self.deleted_scroll_list, text="Không có mục đã xóa",
+                self.deleted_scroll_list, text=TranslationService.get("sidebar.no_deleted"),
                 text_color=ThemeManager.get("text_primary")
             ).pack(padx=10, pady=10)
             return
 
         for note in deleted_notes:
-            title = note.get('title', 'Không có tiêu đề')
+            title = note.get('title', TranslationService.get("sidebar.no_title"))
             deleted_at = note.get('deleted_at', '')
             icon = "☑" if str(note.get('type', '')).lower() == 'checklist' else "📄"
             label = f"{icon} {title}"

@@ -1,5 +1,6 @@
 import customtkinter as ctk
 from services.settings_service import SettingsService
+from services.translation_service import TranslationService
 from ui.main_window import MainWindow
 
 if __name__ == "__main__":
@@ -10,6 +11,9 @@ if __name__ == "__main__":
         ctk.set_default_color_theme(color_theme)
     except Exception:
         ctk.set_default_color_theme("blue")
+
+    # Initialize language
+    TranslationService.set_language(settings.get("language", "en"))
 
     app = MainWindow()
     app.mainloop()

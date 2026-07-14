@@ -5,7 +5,8 @@ class SettingsService:
 
     DEFAULTS = {
         "appearance_mode": "System",
-        "color_theme": "blue"
+        "color_theme": "blue",
+        "language": "en"
     }
 
     def __init__(self):
