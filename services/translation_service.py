@@ -58,6 +58,9 @@ class TranslationService:
         "editor.text_color": "Màu chữ",
         "editor.highlight": "Highlight",
         "editor.zoom": "Phóng to / Thu nhỏ",
+        "editor.insert_media": "📎 Media",
+        "editor.choose_media": "Chọn ảnh, âm thanh hoặc video",
+        "editor.open_media": "Mở",
         "editor.reminder_label": "Nhắc lúc",
         "editor.deadline_label": "Hạn chót",
         "editor.date_picker_reminder": "Chọn thời gian nhắc",
@@ -105,6 +108,7 @@ class TranslationService:
         "msg.export_success_text": "Đã xuất tại: {path}",
         "msg.export_pdf_error": "Lỗi PDF",
         "msg.export_pdf_error_text": "Không xuất được PDF: {error}",
+        "msg.media_error": "Lỗi media",
 
         # Reminder / Deadline notifications
         "reminder.title": "🔔 Nhắc nhở ghi chú",
@@ -213,6 +217,9 @@ class TranslationService:
         "editor.text_color": "Text Color",
         "editor.highlight": "Highlight",
         "editor.zoom": "Zoom",
+        "editor.insert_media": "📎 Media",
+        "editor.choose_media": "Choose images, audio, or video",
+        "editor.open_media": "Open",
         "editor.reminder_label": "🔔 Remind at",
         "editor.deadline_label": "📌 Deadline",
         "editor.date_picker_reminder": "Pick reminder time",
@@ -260,6 +267,7 @@ class TranslationService:
         "msg.export_success_text": "Exported to: {path}",
         "msg.export_pdf_error": "PDF Error",
         "msg.export_pdf_error_text": "Could not export PDF: {error}",
+        "msg.media_error": "Media Error",
 
         # Reminder / Deadline notifications
         "reminder.title": "🔔 Note Reminder",

@@ -1,12 +1,15 @@
 import re
 import tkinter as tk
 import tkinter.font as tkfont
+import uuid
 
 import customtkinter as ctk
-from tkinter import ttk, messagebox, colorchooser
+from tkinter import ttk, messagebox, colorchooser, filedialog
+from PIL import Image, UnidentifiedImageError
 from datetime import datetime
 from ui.date_picker import CTkDatePicker
 from ui.color_picker import CTkColorPicker
+from services.media_service import MediaService
 from services.theme_service import ThemeManager
 from services.translation_service import TranslationService
 
@@ -28,6 +31,10 @@ class EditorFrame(ctk.CTkFrame):
         self.zoom_factor = 1.0
         self._content_search_matches = []
         self._content_search_index = -1
+        self.media_service = MediaService()
+        self._media_attachments = []
+        self._media_widgets = {}
+        self._media_image_refs = {}
 
         self._reminder_placeholder = TranslationService.get("editor.reminder_placeholder")
         self._deadline_placeholder = TranslationService.get("editor.deadline_placeholder")
@@ -61,6 +68,15 @@ class EditorFrame(ctk.CTkFrame):
             command=lambda: self.apply_text_style("underline"), **btn_kwargs
         )
         self.btn_underline.pack(side="left", padx=3)
+
+        self.btn_media = ctk.CTkButton(
+            self.toolbar,
+            text=TranslationService.get("editor.insert_media"),
+            width=96,
+            command=self.insert_media,
+            **btn_kwargs
+        )
+        self.btn_media.pack(side="left", padx=(8, 3))
 
         # Tìm kiếm chỉ trong nội dung của ghi chú đang mở.
         self.content_search_entry = ctk.CTkEntry(
@@ -292,8 +308,8 @@ class EditorFrame(ctk.CTkFrame):
             widget = self._text_widget()
             content = widget.get("1.0", "end-1c")
             for start_offset, end_offset in self._find_content_occurrences(content, keyword):
-                start = f"1.0+{start_offset}c"
-                end = f"1.0+{end_offset}c"
+                start = self._widget_index_from_plain_offset(start_offset)
+                end = self._widget_index_from_plain_offset(end_offset)
                 widget.tag_add("content_search_match", start, end)
                 self._content_search_matches.append((start, end))
             widget.tag_raise("content_search_match")
@@ -645,11 +661,240 @@ class EditorFrame(ctk.CTkFrame):
         self._font_cache.clear()
         self._font_cache_initialized.clear()
 
+    @staticmethod
+    def _format_file_size(size):
+        size = int(size or 0)
+        if size >= 1024 * 1024:
+            return f"{size / (1024 * 1024):.1f} MB"
+        if size >= 1024:
+            return f"{size / 1024:.1f} KB"
+        return f"{size} B"
+
+    def insert_media(self):
+        if self.current_note_type == "Checklist":
+            return
+        paths = filedialog.askopenfilenames(
+            title=TranslationService.get("editor.choose_media"),
+            filetypes=self.media_service.supported_filetypes()
+        )
+        if not paths:
+            return
+
+        widget = self._text_widget()
+        insert_index = widget.index("insert")
+        errors = []
+        for path in paths:
+            try:
+                attachment = self.media_service.import_file(path)
+                attachment["position"] = len(widget.get("1.0", insert_index))
+                self._media_attachments.append(attachment)
+                media_widget = self._create_inline_media_widget(attachment, insert_index)
+                insert_index = widget.index(f"{str(media_widget)} + 1c")
+            except (OSError, ValueError) as exc:
+                errors.append(str(exc))
+        widget.mark_set("insert", insert_index)
+        widget.see(insert_index)
+        widget.focus_set()
+        try:
+            widget.edit_separator()
+        except Exception:
+            pass
+        if errors:
+            messagebox.showwarning(
+                TranslationService.get("msg.media_error"),
+                "\n".join(errors),
+                parent=self
+            )
+
+    def _open_media(self, attachment):
+        try:
+            self.media_service.open_file(attachment.get("path"))
+        except (OSError, ValueError) as exc:
+            messagebox.showerror(
+                TranslationService.get("msg.media_error"),
+                str(exc),
+                parent=self
+            )
+
+    def _remove_media(self, attachment):
+        attachment_id = str(attachment.get("id", ""))
+        media_widget = self._media_widgets.get(attachment_id)
+        widget = self._text_widget()
+        if media_widget is not None:
+            try:
+                index = widget.index(str(media_widget))
+                widget.delete(index, f"{index} + 1c")
+            except tk.TclError:
+                pass
+            try:
+                media_widget.destroy()
+            except Exception:
+                pass
+        self._media_widgets.pop(attachment_id, None)
+        self._media_image_refs.pop(attachment_id, None)
+        self._media_attachments = [
+            item for item in self._media_attachments
+            if str(item.get("id", "")) != attachment_id
+        ]
+        widget.focus_set()
+
+    def _clear_inline_media(self):
+        for media_widget in list(self._media_widgets.values()):
+            try:
+                media_widget.destroy()
+            except Exception:
+                pass
+        self._media_widgets.clear()
+        self._media_image_refs.clear()
+
+    def _create_inline_media_widget(self, attachment, index):
+        widget = self._text_widget()
+        attachment_id = str(attachment.get("id") or uuid.uuid4().hex)
+        attachment["id"] = attachment_id
+        path = self.media_service.resolve_path(attachment.get("path"))
+        kind = attachment.get("kind") or self.media_service.media_kind(path) or "media"
+
+        card = ctk.CTkFrame(
+            widget,
+            fg_color=ThemeManager.get("grid_bg"),
+            border_width=1,
+            border_color=ThemeManager.get("grid_border")
+        )
+        name = str(attachment.get("name") or path.name)
+
+        if kind == "image" and path.is_file():
+            try:
+                with Image.open(path) as source_image:
+                    preview = source_image.convert("RGBA")
+                    preview.thumbnail((420, 260))
+                ctk_image = ctk.CTkImage(
+                    light_image=preview,
+                    dark_image=preview,
+                    size=preview.size
+                )
+                self._media_image_refs[attachment_id] = ctk_image
+                ctk.CTkLabel(card, text="", image=ctk_image).pack(
+                    padx=8, pady=(8, 3)
+                )
+            except (OSError, UnidentifiedImageError):
+                ctk.CTkLabel(card, text="🖼", font=ctk.CTkFont(size=34)).pack(
+                    padx=12, pady=(8, 3)
+                )
+        else:
+            icon = "🔊" if kind == "audio" else "🎬" if kind == "video" else "📎"
+            ctk.CTkLabel(
+                card,
+                text=f"{icon}  {name}",
+                font=ctk.CTkFont(size=15),
+                text_color=ThemeManager.get("text_primary")
+            ).pack(padx=14, pady=(10, 4))
+
+        footer = ctk.CTkFrame(card, fg_color="transparent")
+        footer.pack(fill="x", padx=8, pady=(2, 8))
+        if kind == "image":
+            ctk.CTkLabel(
+                footer,
+                text=f"{name} · {self._format_file_size(attachment.get('size'))}",
+                anchor="w",
+                text_color=ThemeManager.get("text_secondary")
+            ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            footer,
+            text=TranslationService.get("editor.open_media"),
+            width=48,
+            height=24,
+            command=lambda item=attachment: self._open_media(item)
+        ).pack(side="left", padx=(0, 4))
+        ctk.CTkButton(
+            footer,
+            text="✕",
+            width=28,
+            height=24,
+            fg_color="#b91c1c",
+            hover_color="#991b1b",
+            command=lambda item=attachment: self._remove_media(item)
+        ).pack(side="left")
+
+        widget.window_create(index, window=card, align="center", padx=6, pady=6)
+        self._media_widgets[attachment_id] = card
+        return card
+
+    def _render_inline_media(self):
+        self._clear_inline_media()
+        if self.current_note_type == "Checklist":
+            return
+        text_length = len(self._text_widget().get("1.0", "end-1c"))
+
+        def sort_key(indexed_attachment):
+            original_index, item = indexed_attachment
+            try:
+                position = int(item.get("position", text_length))
+            except (TypeError, ValueError):
+                position = text_length
+            return position, original_index
+
+        indexed_attachments = list(enumerate(self._media_attachments))
+        for _original_index, attachment in sorted(
+            indexed_attachments, key=sort_key, reverse=True
+        ):
+            try:
+                position = max(0, min(int(attachment.get("position", text_length)), text_length))
+            except (TypeError, ValueError):
+                position = text_length
+            attachment["position"] = position
+            self._create_inline_media_widget(attachment, f"1.0+{position}c")
+
+    def _serialized_media(self):
+        widget = self._text_widget()
+        serialized = []
+        for attachment in self._media_attachments:
+            attachment_id = str(attachment.get("id", ""))
+            media_widget = self._media_widgets.get(attachment_id)
+            if media_widget is None:
+                continue
+            try:
+                position = len(widget.get("1.0", str(media_widget)))
+            except tk.TclError:
+                continue
+            item = dict(attachment)
+            item["position"] = position
+            serialized.append(item)
+        serialized.sort(key=lambda item: int(item.get("position", 0)))
+        self._media_attachments = serialized
+        return [dict(item) for item in serialized]
+
+    def _current_media_positions(self):
+        widget = self._text_widget()
+        positions = []
+        for media_widget in self._media_widgets.values():
+            try:
+                positions.append(len(widget.get("1.0", str(media_widget))))
+            except tk.TclError:
+                continue
+        return sorted(positions)
+
+    def _widget_index_from_plain_offset(self, offset, positions=None):
+        offset = max(0, int(offset))
+        if positions is None:
+            positions = self._current_media_positions()
+        embedded_before = sum(1 for position in positions if position <= offset)
+        return self._text_widget().index(f"1.0+{offset + embedded_before}c")
+
     def _render_content(self, content):
         widget = self._text_widget()
         self._clear_font_cache()
+        self._clear_inline_media()
         widget.delete("1.0", "end")
         self._remove_style_tags("1.0", "end")
+        self._media_attachments = []
+
+        if isinstance(content, dict):
+            for attachment in content.get("media", []):
+                if isinstance(attachment, dict) and attachment.get("path"):
+                    item = dict(attachment)
+                    item["id"] = str(item.get("id") or uuid.uuid4().hex)
+                    item.setdefault("position", len(str(content.get("text", ""))))
+                    self._media_attachments.append(item)
 
         if isinstance(content, dict) and "text" in content:
             text = str(content.get("text", ""))
@@ -666,6 +911,7 @@ class EditorFrame(ctk.CTkFrame):
             except Exception:
                 pass
             widget.tag_raise("sel")
+            self._render_inline_media()
             return
 
         text = str(content or "")
@@ -703,23 +949,29 @@ class EditorFrame(ctk.CTkFrame):
         except Exception:
             pass
         widget.tag_raise("sel")
+        self._render_inline_media()
 
     def _serialize_content(self):
         widget = self._text_widget()
         text = widget.get("1.0", "end-1c")
+        media = self._serialized_media()
         if not text:
-            return {"text": "", "spans": []}
+            return {"text": "", "spans": [], "media": media}
+        media_positions = [int(item.get("position", 0)) for item in media]
         spans = []
-        current_style = self._normalize_style(self._style_at_index("1.0"))
+        current_style = self._normalize_style(
+            self._style_at_index(self._widget_index_from_plain_offset(0, media_positions))
+        )
         span_start = 0
         for index, _char in enumerate(text):
-            style = self._normalize_style(self._style_at_index(f"1.0+{index}c"))
+            widget_index = self._widget_index_from_plain_offset(index, media_positions)
+            style = self._normalize_style(self._style_at_index(widget_index))
             if style != current_style:
                 spans.append({"start": span_start, "end": index, "style": current_style})
                 span_start = index
                 current_style = style
         spans.append({"start": span_start, "end": len(text), "style": current_style})
-        return {"text": text, "spans": spans}
+        return {"text": text, "spans": spans, "media": media}
 
     def apply_markdown_format(self, marker):
         if marker == "**":
@@ -736,6 +988,8 @@ class EditorFrame(ctk.CTkFrame):
         self.add_item_frame.grid_forget()
 
         if note_type == "Checklist":
+            self._clear_inline_media()
+            self._media_attachments = []
             self.checklist_frame.grid(row=0, column=0, sticky="nsew")
             self.add_item_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 10))
             self.btn_bold.configure(state="disabled")
@@ -743,6 +997,7 @@ class EditorFrame(ctk.CTkFrame):
             self.font_family_menu.configure(state="disabled")
             self.font_size_menu.configure(state="disabled")
             self.document_zoom_slider.configure(state="disabled")
+            self.btn_media.configure(state="disabled")
         else:
             self.textbox_content.grid(row=0, column=0, sticky="nsew")
             self.btn_bold.configure(state="normal")
@@ -750,6 +1005,7 @@ class EditorFrame(ctk.CTkFrame):
             self.font_family_menu.configure(state="normal")
             self.font_size_menu.configure(state="normal")
             self.document_zoom_slider.configure(state="normal")
+            self.btn_media.configure(state="normal")
 
     def _add_checklist_item_from_enter(self, event):
         self.add_checklist_item()

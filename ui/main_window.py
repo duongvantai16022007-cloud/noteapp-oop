@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, simpledialog, Menu
 import datetime
 import calendar
+from types import SimpleNamespace
 import os
 
 from data.NoteRepository import NoteRepository
@@ -591,12 +592,21 @@ class MainWindow(ctk.CTk):
     # =========================
     # Export
     # =========================
+    def _current_editor_note_for_export(self):
+        data = self.editor.get_data()
+        return SimpleNamespace(
+            title=data.get("title") or self.current_note.title,
+            content=data.get("content", self.current_note.content),
+            reminder_at=data.get("reminder_at"),
+            deadline_at=data.get("deadline_at"),
+        )
+
     def export_md(self):
         if not self.current_note:
             return messagebox.showwarning("Lỗi", "Chọn ghi chú để xuất!")
         path = filedialog.asksaveasfilename(defaultextension=".md", filetypes=[("Markdown", "*.md")])
         if path:
-            self.export_service.export_to_markdown(self.current_note, path)
+            self.export_service.export_to_markdown(self._current_editor_note_for_export(), path)
             messagebox.showinfo("Thành công", f"Đã xuất tại: {path}")
 
     def export_pdf(self):
@@ -605,7 +615,7 @@ class MainWindow(ctk.CTk):
         path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
         if path:
             try:
-                self.export_service.export_to_pdf(self.current_note, path)
+                self.export_service.export_to_pdf(self._current_editor_note_for_export(), path)
                 messagebox.showinfo("Thành công", f"Đã xuất tại: {path}")
             except Exception as e:
                 messagebox.showerror("Lỗi PDF", f"Không xuất được PDF: {e}")

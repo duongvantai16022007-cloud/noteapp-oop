@@ -22,6 +22,8 @@ notes.db-journal
 
 # Thư mục lưu trữ hình ảnh/âm thanh của MediaNote
 media/
+data/media/
+assets/fonts/*.pkl
 
 # Các file export sinh ra từ ExportService (PDF, Markdown)
 *.pdf
