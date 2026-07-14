@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, simpledialog, Menu
 import datetime
 import calendar
+import os
 
 from data.NoteRepository import NoteRepository
 from model.note_factory import NoteFactory
@@ -110,6 +111,8 @@ class MainWindow(ctk.CTk):
         file_menu.add_command(label=_("menu.file.export_md"), command=self.export_md)
         file_menu.add_command(label=_("menu.file.export_pdf"), command=self.export_pdf)
         menubar.add_cascade(label=_("menu.file"), menu=file_menu)
+        file_menu.add_separator()
+        file_menu.add_command(label="Nhập từ file (Import)...", command=self.import_from_file)
         
         # --- Edit Menu ---
         edit_menu = Menu(menubar, tearoff=0)
@@ -609,3 +612,20 @@ class MainWindow(ctk.CTk):
 
     def on_close(self):
         self.iconify()
+        
+    def import_from_file(self):
+        file_path = filedialog.askopenfilename(
+            title="Chọn file để nhập",
+            filetypes=[("Text files", "*.txt"), ("Markdown files", "*.md"), ("All files", "*.*")]
+        )
+        if file_path:
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                file_name = os.path.basename(file_path).split('.')[0]
+                self.prepare_new("Text")
+                self.editor.entry_title.insert(0, file_name)
+                self.editor._render_content(content)
+                messagebox.showinfo("Thành công", "Đã nhập nội dung từ file! Vui lòng bấm Lưu để hoàn tất.")
+            except Exception as e:
+                messagebox.showerror("Lỗi", f"Không thể đọc file: {str(e)}")
