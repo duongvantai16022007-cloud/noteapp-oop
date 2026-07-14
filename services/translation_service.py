@@ -69,6 +69,7 @@ class TranslationService:
         "editor.checklist_add": "Thêm",
         "editor.reminder_placeholder": "YYYY-MM-DD HH:MM",
         "editor.deadline_placeholder": "YYYY-MM-DD HH:MM",
+        "editor.content_search_placeholder": "Tìm trong ghi chú...",
 
         # Messages
         "msg.save_success": "Đã lưu ghi chú.",
@@ -228,6 +229,7 @@ class TranslationService:
         "editor.checklist_add": "Add",
         "editor.reminder_placeholder": "YYYY-MM-DD HH:MM",
         "editor.deadline_placeholder": "YYYY-MM-DD HH:MM",
+        "editor.content_search_placeholder": "Search in note...",
 
         # Messages
         "msg.save_success": "Note saved successfully.",

@@ -1,30 +1,37 @@
 {
-  "popup_bg": ["#f5f0ff", "#150f1e"],
+  "popup_bg": ["#f5f0ff", "#0d0914"],
   "text_primary": ["#160e26", "#f2ebfa"],
   "text_secondary": ["#4f3d73", "#bfaed9"],
-  "text_muted": ["#6c5599", "#8e75b8"],
+  "text_muted": ["#6c5599", "#947cb8"],
   "text_extra": ["#362554", "#dfd5f0"],
   "text_on_accent": ["#ffffff", "#ffffff"],
-  "text_weekday": ["#3b2e5a", "#c4b5d9"],
+  "text_weekday": ["#7c3aed", "#a78bfa"],
 
-  "accent_primary": ["#7c3aed", "#6d28d9"],
-  "accent_primary_hover": ["#8b5cf6", "#7c3aed"],
-  "accent_success": ["#06b6d4", "#0891b2"],
-  "accent_success_hover": ["#22d3ee", "#06b6d4"],
+  "accent_primary": ["#7c3aed", "#a78bfa"],
+  "accent_primary_hover": ["#6d28d9", "#c084fc"],
+  "accent_success": ["#06b6d4", "#22d3ee"],
+  "accent_success_hover": ["#0891b2", "#06b6d4"],
   "accent_danger": ["#f43f5e", "#e11d48"],
   "accent_danger_hover": ["#fb7185", "#f43f5e"],
 
-  "btn_secondary": ["#e0e7ff", "#251b3d"],
-  "btn_secondary_hover": ["#dbeafe", "#312352"],
-  "btn_cancel": ["#c7d2fe", "#312352"],
-  "btn_cancel_hover": ["#a5b4fc", "#251b3d"],
+  "btn_secondary": ["#e0e7ff", "#191126"],
+  "btn_secondary_hover": ["#c7d2fe", "#271a3d"],
+  "btn_cancel": ["#c7d2fe", "#271a3d"],
+  "btn_cancel_hover": ["#a5b4fc", "#191126"],
 
-  "grid_bg": ["#faf8ff", "#181025"],
-  "grid_border": ["#ddd6fe", "#2e1f4d"],
-  "cell_bg": ["#f3eeff", "#1f1533"],
-  "cell_bg_muted": ["#ede5ff", "#1f1533"],
-  "cell_border": ["#ddd6fe", "#2e1f4d"],
+  "grid_bg": ["#ffffff", "#100b1a"],
+  "grid_border": ["#ddd6fe", "#24183b"],
+  "cell_bg": ["#ffffff", "#150f24"],
+  "cell_bg_muted": ["#f3eeff", "#1e1533"],
+  "cell_border": ["#c084fc", "#342259"],
 
-  "btn_note": ["#ede5ff", "#1c1230"],
-  "btn_note_hover": ["#ddd6fe", "#2c1d4a"]
+  "btn_note": ["#f8f5ff", "#1a122c"],
+  "btn_note_hover": ["#ddd6fe", "#2c1e4a"],
+
+  "search_match_bg": ["#e0e7ff", "#311c52"],
+  "search_match_fg": ["#4c1d95", "#f5f3ff"],
+  "search_current_bg": ["#7c3aed", "#a78bfa"],
+  "search_current_fg": ["#ffffff", "#0d0914"],
+
+  "selection_bg": "#7c3aed"
 }
