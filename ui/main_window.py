@@ -12,6 +12,7 @@ from services.security_service import SecurityManager
 from services.reminder_service import ReminderService
 from services.settings_service import SettingsService
 from services.theme_service import ThemeManager
+from services.translation_service import TranslationService
 
 from ui.sidebar import SidebarFrame
 from ui.editor import EditorFrame
@@ -37,6 +38,8 @@ class MainWindow(ctk.CTk):
         # Apply settings initially
         initial_appearance = self.settings.get("appearance_mode", "System")
         initial_color = self.settings.get("color_theme", "blue")
+        initial_language = self.settings.get("language", "vi") 
+        TranslationService.set_language(initial_language)
         ctk.set_appearance_mode(initial_appearance)
         try:
             ctk.set_default_color_theme(initial_color.lower().replace(" ", "-"))
@@ -94,56 +97,88 @@ class MainWindow(ctk.CTk):
 
     def _build_menu(self):
         menubar = Menu(self)
+        _ = TranslationService.get # Hàm rút gọn để lấy từ khóa dịch
         
         # --- File Menu ---
         file_menu = Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Tạo Text Note", command=lambda: self.prepare_new("Text"))
-        file_menu.add_command(label="Tạo Checklist", command=lambda: self.prepare_new("Checklist"))
+        file_menu.add_command(label=_("menu.file.new_text"), command=lambda: self.prepare_new("Text"))
+        file_menu.add_command(label=_("menu.file.new_checklist"), command=lambda: self.prepare_new("Checklist"))
         file_menu.add_separator()
-        file_menu.add_command(label="Lưu Ghi Chú", command=self._menu_save_note)
-        file_menu.add_command(label="Xóa Ghi Chú", command=self.delete_note)
+        file_menu.add_command(label=_("menu.file.save"), command=self._menu_save_note)
+        file_menu.add_command(label=_("menu.file.delete"), command=self.delete_note)
         file_menu.add_separator()
-        file_menu.add_command(label="Xuất Markdown", command=self.export_md)
-        file_menu.add_command(label="Xuất PDF", command=self.export_pdf)
-        menubar.add_cascade(label="Tệp (File)", menu=file_menu)
-        file_menu = Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Tạo Text Note", command=lambda: self.prepare_new("Text"))
-        file_menu.add_command(label="Tạo Checklist", command=lambda: self.prepare_new("Checklist"))
-        file_menu.add_command(label="Tạo Thư mục mới...", command=lambda: self.create_new_folder(simpledialog.askstring("Thư mục mới", "Nhập tên thư mục:"))
-        )
-        file_menu.add_command(label="Di chuyển vào Thư mục...", command=self.move_current_note_to_folder)
-        file_menu.add_separator()
+        file_menu.add_command(label=_("menu.file.export_md"), command=self.export_md)
+        file_menu.add_command(label=_("menu.file.export_pdf"), command=self.export_pdf)
+        menubar.add_cascade(label=_("menu.file"), menu=file_menu)
+        
         # --- Edit Menu ---
         edit_menu = Menu(menubar, tearoff=0)
-        edit_menu.add_command(label="Hoàn tác (Undo)", command=self.handle_undo)
-        edit_menu.add_command(label="Làm lại (Redo)", command=self.handle_redo)
-        menubar.add_cascade(label="Chỉnh sửa (Edit)", menu=edit_menu)
+        edit_menu.add_command(label=_("menu.edit.undo"), command=self.handle_undo)
+        edit_menu.add_command(label=_("menu.edit.redo"), command=self.handle_redo)
+        menubar.add_cascade(label=_("menu.edit"), menu=edit_menu)
         
         # --- View Menu ---
         view_menu = Menu(menubar, tearoff=0)
-        view_menu.add_command(label="Lịch biểu (Calendar)", command=self.open_calendar_view)
-        menubar.add_cascade(label="Xem (View)", menu=view_menu)
+        view_menu.add_command(label=_("menu.view.calendar"), command=self.open_calendar_view)
+        menubar.add_cascade(label=_("menu.view"), menu=view_menu)
         
         # --- Options Menu ---
         options_menu = Menu(menubar, tearoff=0)
-        options_menu.add_command(label="Khóa / Gỡ khóa Ghi Chú", command=self.toggle_note_lock)
-        options_menu.add_command(label="Di chuyển vào Thư mục...", command=self.move_current_note_to_folder) # <--- DÒNG MỚI NÀY
+        options_menu.add_command(label=_("menu.options.lock"), command=self.toggle_note_lock)
+        options_menu.add_command(label="Di chuyển vào Thư mục...", command=self.move_current_note_to_folder)
         options_menu.add_separator()
         
+        # Menu Giao diện
         appearance_menu = Menu(options_menu, tearoff=0)
         for mode in ["System", "Light", "Dark"]:
             appearance_menu.add_command(label=mode, command=lambda m=mode: self.handle_theme_change("appearance_mode", m))
-        options_menu.add_cascade(label="Chế độ (Appearance)", menu=appearance_menu)
+        options_menu.add_cascade(label=_("menu.options.appearance"), menu=appearance_menu)
         
+        # Menu Chủ đề màu
         from services.theme_service import ThemeManager
         theme_menu = Menu(options_menu, tearoff=0)
         for t in ThemeManager.get_available_themes():
             theme_menu.add_command(label=t, command=lambda th=t: self.handle_theme_change("color_theme", th))
-        options_menu.add_cascade(label="Chủ đề màu (Theme)", menu=theme_menu)
+        options_menu.add_cascade(label=_("menu.options.theme"), menu=theme_menu)
+
+        # ĐOẠN BỔ SUNG: Menu Ngôn ngữ
+        lang_menu = Menu(options_menu, tearoff=0)
+        for lang in TranslationService.get_available_languages():
+            lang_menu.add_command(
+                label=lang["name"], 
+                command=lambda code=lang["code"]: self.handle_language_change(code)
+            )
+        options_menu.add_cascade(label=_("menu.options.language"), menu=lang_menu)
         
-        menubar.add_cascade(label="Tùy chọn (Options)", menu=options_menu)
-        
+        menubar.add_cascade(label=_("menu.options"), menu=options_menu)
         self.config(menu=menubar)
+
+    def handle_language_change(self, lang_code):
+        """Lưu cấu hình ngôn ngữ và tải lại giao diện"""
+        try:
+            self.wm_attributes("-alpha", 0) # Tạm làm mờ cửa sổ chống giật chớp
+        except Exception:
+            pass
+
+        # 1. Lưu tùy chọn vào DB
+        self.settings_service.set_setting("language", lang_code)
+        self.settings["language"] = lang_code
+        
+        # 2. Đổi ngôn ngữ trong Service
+        TranslationService.set_language(lang_code)
+
+        # Đổi lại tiêu đề app
+        self.title(TranslationService.get("app.title") + " - Full Features")
+
+        # 3. Tái tạo lại toàn bộ UI với ngôn ngữ mới
+        restore_note_id = self.current_note.id if self.current_note else None
+        self._build_ui(restore_note_id=restore_note_id)
+
+        self.update_idletasks()
+        try:
+            self.wm_attributes("-alpha", 1) # Hiện lại cửa sổ
+        except Exception:
+            pass
 
     def refresh_sidebar(self):
         self.repo.purge_expired_deleted_notes(days=30)
@@ -223,18 +258,60 @@ class MainWindow(ctk.CTk):
     # =========================
     def prepare_new(self, note_type):
         self.current_note = None
+        self.pending_folder_id = None
         self.editor.set_data("", "", note_type, reminder_at=None, deadline_at=None, is_locked=False)
 
-    def create_new_folder(self, folder_name):
-        """Xử lý tạo thư mục từ UI và ghi nhận vào Database"""
-        try:
-            self.repo.create_folder(folder_name)
-            messagebox.showinfo("Thành công", f"Đã tạo thư mục '{folder_name}' thành công!")
-            self.refresh_sidebar()
-        except Exception as e:
-            messagebox.showerror("Lỗi", f"Không thể tạo thư mục: {str(e)}")
+    def prepare_new_in_folder(self, folder_id, folder_name):
+        """Hỏi người dùng loại Note và chuẩn bị giao diện Editor trống."""
+        answer = messagebox.askyesnocancel("Tạo ghi chú mới", f"Bạn muốn tạo loại ghi chú nào trong thư mục '{folder_name}'?\n\n- Yes (Có): Text Note\n- No (Không): Checklist")
+        if answer is True: 
+            self.prepare_new("Text")
+            self.pending_folder_id = folder_id 
+        elif answer is False: 
+            self.prepare_new("Checklist")
+            self.pending_folder_id = folder_id
+
+    def prepare_new_in_folder(self, folder_id, folder_name):
+        from services.translation_service import TranslationService
+        _ = TranslationService.get
+        
+        popup = ctk.CTkToplevel(self)
+        popup.title(_("msg.create_in_folder_title"))
+        popup.geometry("380x150")
+        popup.resizable(False, False)
+        popup.transient(self)
+        popup.grab_set()
+        popup.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() - 380) // 2
+        y = self.winfo_y() + (self.winfo_height() - 150) // 2
+        popup.geometry(f"+{x}+{y}")
+        prompt_text = _("msg.create_in_folder_prompt", folder_name)
+        ctk.CTkLabel(popup, text=prompt_text, font=ctk.CTkFont(size=14)).pack(pady=(20, 15))
+        btn_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_frame.pack(fill="x", padx=20)
+        def choose_text():
+            self.prepare_new("Text")
+            self.pending_folder_id = folder_id
+            popup.destroy()
+        def choose_checklist():
+            self.prepare_new("Checklist")
+            self.pending_folder_id = folder_id
+            popup.destroy()
+        ctk.CTkButton(
+            btn_frame, 
+            text=_("msg.btn_text_note"), 
+            height=35,
+            command=choose_text
+        ).pack(side="left", expand=True, padx=10)
+        ctk.CTkButton(
+            btn_frame, 
+            text=_("msg.btn_checklist"), 
+            height=35,
+            command=choose_checklist
+        ).pack(side="right", expand=True, padx=10)
 
     def load_note(self, note_id):
+        self.pending_folder_id = None
         note_data = self.repo.get_note(note_id)
         if not note_data:
             return
@@ -342,7 +419,7 @@ class MainWindow(ctk.CTk):
                     "type": note_type,
                     "title": data["title"],
                     "content": data["content"],
-                    "folder_id": getattr(self, "selected_folder_id", None),
+                    "folder_id": getattr(self, "pending_folder_id", None),
                     **extra
                 }
                 new_note_obj = NoteFactory.from_dict(raw_data)
@@ -350,6 +427,7 @@ class MainWindow(ctk.CTk):
                 command = AddCommand(new_note_obj, self.repo)
                 command.execute()
                 self.current_note = new_note_obj
+                self.pending_folder_id = None
             else:
                 command = EditCommand(
                     self.current_note,
