@@ -1,0 +1,30 @@
+{
+  "popup_bg": ["#fdf2f4", "#1c1017"],
+  "text_primary": ["#21161b", "#f7ebf0"],
+  "text_secondary": ["#705462", "#ccb0be"],
+  "text_muted": ["#8a6b7b", "#a38594"],
+  "text_extra": ["#614754", "#e0cbd5"],
+  "text_on_accent": ["#ffffff", "#ffffff"],
+  "text_weekday": ["#4a3040", "#d4b8c8"],
+
+  "accent_primary": ["#fda4af", "#fb7185"],
+  "accent_primary_hover": ["#fecdd3", "#fda4af"],
+  "accent_success": ["#34d399", "#059669"],
+  "accent_success_hover": ["#6ee7b7", "#10b981"],
+  "accent_danger": ["#f87171", "#dc2626"],
+  "accent_danger_hover": ["#fca5a5", "#ef4444"],
+
+  "btn_secondary": ["#f3d5dc", "#3d2030"],
+  "btn_secondary_hover": ["#eebcc8", "#4f2b3f"],
+  "btn_cancel": ["#dca8b5", "#4f2b3f"],
+  "btn_cancel_hover": ["#cc8fa0", "#3d2030"],
+
+  "grid_bg": ["#fffbfc", "#1e1318"],
+  "grid_border": ["#f3d5dc", "#3d2030"],
+  "cell_bg": ["#fef1f3", "#261520"],
+  "cell_bg_muted": ["#fce7ea", "#261520"],
+  "cell_border": ["#f3d5dc", "#3d2030"],
+
+  "btn_note": ["#f9e3e8", "#2d1824"],
+  "btn_note_hover": ["#f4c7d2", "#3d2030"]
+}
