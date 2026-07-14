@@ -175,8 +175,11 @@ class ReminderServiceTests(unittest.TestCase):
         self.assertEqual(repo.marked_reminders, ["r1"])
         self.assertEqual(repo.marked_deadlines, ["d1"])
         self.assertEqual(callbacks, [("r1", False), ("d1", True)])
+        service.thread.is_alive.return_value = True
         service.stop()
         self.assertFalse(service.running)
+        self.assertTrue(service._stop_event.is_set())
+        service.thread.join.assert_called_once_with(timeout=1)
 
     def test_legacy_callback_and_console_notification_fallback(self):
         repo = SimpleNamespace(

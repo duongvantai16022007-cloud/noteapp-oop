@@ -17,6 +17,7 @@ class ReminderService:
         self.interval = interval
         self.reminders = PriorityQueue()
         self.running = True
+        self._stop_event = threading.Event()
 
         self.thread = threading.Thread(target=self._run)
         self.thread.daemon = True
@@ -26,13 +27,13 @@ class ReminderService:
         self.reminders.put((remind_time.timestamp(), message))
 
     def _run(self):
-        while self.running:
+        while not self._stop_event.is_set():
             try:
                 self._check_memory_queue()
                 self._check_database_reminders()
             except Exception as exc:
                 print(f"ReminderService error: {exc}")
-            time.sleep(self.interval)
+            self._stop_event.wait(self.interval)
 
     def _check_memory_queue(self):
         if not self.reminders.empty():
@@ -78,3 +79,6 @@ class ReminderService:
 
     def stop(self):
         self.running = False
+        self._stop_event.set()
+        if self.thread.is_alive() and threading.current_thread() is not self.thread:
+            self.thread.join(timeout=1)

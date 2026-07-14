@@ -1,7 +1,7 @@
 import datetime
 import unittest
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import customtkinter as ctk
 import tkinter as tk
@@ -167,6 +167,38 @@ class SidebarFrameTests(TkTestCase):
         sidebar.destroy()
 
 
+class MainWindowIntegrationTests(TkTestCase):
+    @patch("ui.main_window.ReminderService")
+    @patch("ui.main_window.SettingsService")
+    @patch("ui.main_window.NoteRepository")
+    def test_constructs_and_shutdown_releases_resources(
+        self,
+        repository_class,
+        settings_class,
+        reminder_class,
+    ):
+        repo = repository_class.return_value
+        repo.get_all_folders.return_value = []
+        repo.get_all_notes.return_value = []
+        repo.get_deleted_notes.return_value = []
+        repo.db = MagicMock()
+        settings_class.return_value.get_all.return_value = {
+            "appearance_mode": "System",
+            "color_theme": "blue",
+            "language": "en",
+        }
+
+        app = MainWindow()
+        app.withdraw()
+        app.update_idletasks()
+        self.assertIsNotNone(app.sidebar)
+        self.assertIsNotNone(app.editor)
+
+        app.shutdown()
+        reminder_class.return_value.stop.assert_called_once_with()
+        repo.db.close.assert_called_once_with()
+
+
 class UiHelperTests(unittest.TestCase):
     def test_main_window_datetime_content_and_export_snapshot_helpers(self):
         class Harness:
@@ -216,6 +248,57 @@ class UiHelperTests(unittest.TestCase):
         snapshot = harness._current_editor_note_for_export()
         self.assertEqual(snapshot.title, "Draft")
         self.assertEqual(snapshot.content["text"], "Current")
+
+    def test_main_window_draft_search_export_and_shutdown_regressions(self):
+        class Harness:
+            _capture_editor_state = MainWindow._capture_editor_state
+            _content_to_plain_text = MainWindow._content_to_plain_text
+            _current_editor_note_for_export = MainWindow._current_editor_note_for_export
+            _prepare_note_for_export = MainWindow._prepare_note_for_export
+            handle_search = MainWindow.handle_search
+            shutdown = MainWindow.shutdown
+
+        draft = {
+            "title": "Unsaved",
+            "content": {"text": "Draft body", "media": []},
+            "reminder_at": "",
+            "deadline_at": "",
+        }
+        harness = Harness()
+        harness._ui_built = True
+        harness.editor = SimpleNamespace(
+            current_note_type="Text",
+            get_data=lambda: draft,
+        )
+        harness.current_note = None
+
+        state = harness._capture_editor_state()
+        self.assertEqual(state["title"], "Unsaved")
+        self.assertEqual(state["note_type"], "Text")
+        self.assertEqual(harness._prepare_note_for_export().content["text"], "Draft body")
+        self.assertEqual(
+            harness._content_to_plain_text('{"text": "JSON body", "spans": []}'),
+            "JSON body",
+        )
+
+        harness.sidebar = SimpleNamespace(
+            search_entry=SimpleNamespace(get=lambda: ""),
+            update_list=MagicMock(),
+        )
+        harness.refresh_sidebar = MagicMock()
+        harness.repo = MagicMock()
+        harness.handle_search()
+        harness.refresh_sidebar.assert_called_once_with()
+        harness.sidebar.update_list.assert_not_called()
+
+        harness._closing = False
+        harness.reminder_service = MagicMock()
+        harness.repo = SimpleNamespace(db=MagicMock())
+        harness.destroy = MagicMock()
+        harness.shutdown()
+        harness.reminder_service.stop.assert_called_once_with()
+        harness.repo.db.close.assert_called_once_with()
+        harness.destroy.assert_called_once_with()
 
     def test_calendar_and_date_picker_month_rollover(self):
         calendar_view = SimpleNamespace(

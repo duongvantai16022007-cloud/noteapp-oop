@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import messagebox, filedialog, simpledialog, Menu
 import datetime
 import calendar
+import json
 import os
 from types import SimpleNamespace
 
@@ -31,6 +32,8 @@ class MainWindow(ctk.CTk):
         self.current_note = None
         self.calendar_month = datetime.date.today().replace(day=1)
         self._ui_built = False
+        self._closing = False
+        self.pending_folder_id = None
 
         # Init language from settings
         TranslationService.set_language(self.settings.get("language", "en"))
@@ -66,7 +69,26 @@ class MainWindow(ctk.CTk):
     # =========================
     # Helpers
     # =========================
-    def _build_ui(self, restore_note_id=None):
+    def _capture_editor_state(self):
+        """Return the current editor draft before rebuilding the interface."""
+        if not self._ui_built or not getattr(self, "editor", None):
+            return None
+
+        try:
+            data = self.editor.get_data()
+        except (AttributeError, tk.TclError):
+            return None
+
+        return {
+            "title": data.get("title", ""),
+            "content": data.get("content", ""),
+            "reminder_at": data.get("reminder_at"),
+            "deadline_at": data.get("deadline_at"),
+            "note_type": getattr(self.editor, "current_note_type", "Text"),
+            "is_locked": bool(getattr(self.current_note, "is_locked", False)),
+        }
+
+    def _build_ui(self, restore_note_id=None, restore_state=None):
         if getattr(self, "sidebar", None):
             self.sidebar.destroy()
         if getattr(self, "editor", None):
@@ -87,7 +109,16 @@ class MainWindow(ctk.CTk):
 
         self._ui_built = True
         self.refresh_sidebar()
-        if restore_note_id:
+        if restore_state is not None:
+            self.editor.set_data(
+                restore_state.get("title", ""),
+                restore_state.get("content", ""),
+                restore_state.get("note_type", "Text"),
+                reminder_at=restore_state.get("reminder_at"),
+                deadline_at=restore_state.get("deadline_at"),
+                is_locked=restore_state.get("is_locked", False),
+            )
+        elif restore_note_id:
             self.load_note(restore_note_id)
         else:
             self.prepare_new("Text")
@@ -133,6 +164,11 @@ class MainWindow(ctk.CTk):
         file_menu.add_command(
             label=TranslationService.get("menu.file.import"),
             command=self.import_from_file
+        )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label=TranslationService.get("menu.file.exit"),
+            command=self.shutdown,
         )
         menubar.add_cascade(label=TranslationService.get("menu.file"), menu=file_menu)
 
@@ -267,6 +303,14 @@ class MainWindow(ctk.CTk):
         }
 
     def _content_to_plain_text(self, content):
+        if isinstance(content, str):
+            stripped = content.strip()
+            if stripped.startswith(("{", "[")):
+                try:
+                    return self._content_to_plain_text(json.loads(stripped))
+                except json.JSONDecodeError:
+                    pass
+            return content
         if isinstance(content, dict):
             return str(content.get("text", ""))
         if isinstance(content, list):
@@ -288,8 +332,30 @@ class MainWindow(ctk.CTk):
         self.editor.set_data("", "", note_type, reminder_at=None, deadline_at=None, is_locked=False)
 
     def create_new_folder(self, folder_name):
-        self.repo.create_folder(folder_name)
-        self.refresh_sidebar()
+        folder_name = (folder_name or "").strip()
+        if not folder_name:
+            return messagebox.showwarning(
+                TranslationService.get("msg.save_error"),
+                TranslationService.get("msg.folder_empty"),
+            )
+
+        try:
+            existing_names = {
+                str(folder["name"]).strip().casefold()
+                for folder in self.repo.get_all_folders()
+            }
+            if folder_name.casefold() in existing_names:
+                return messagebox.showwarning(
+                    TranslationService.get("msg.save_error"),
+                    TranslationService.get("msg.folder_exists"),
+                )
+            self.repo.create_folder(folder_name)
+            self.refresh_sidebar()
+        except Exception as exc:
+            messagebox.showerror(
+                TranslationService.get("msg.save_error"),
+                TranslationService.get("msg.folder_create_error", str(exc)),
+            )
 
     def prepare_new_in_folder(self, folder_id, folder_name):
         popup = ctk.CTkToplevel(self)
@@ -399,7 +465,13 @@ class MainWindow(ctk.CTk):
                 (folder["id"] for folder in folders if folder["name"] == selected_name),
                 None,
             )
-            self.repo.move_note_to_folder(self.current_note.id, target_id)
+            try:
+                self.repo.move_note_to_folder(self.current_note.id, target_id)
+            except Exception as exc:
+                return messagebox.showerror(
+                    TranslationService.get("msg.save_error"),
+                    TranslationService.get("msg.move_folder_error", str(exc)),
+                )
             self.current_note.folder_id = target_id
             popup.destroy()
             self.refresh_sidebar()
@@ -454,6 +526,11 @@ class MainWindow(ctk.CTk):
                 TranslationService.get("msg.save_error"),
                 str(exc)
             )
+        except Exception as exc:
+            return messagebox.showerror(
+                TranslationService.get("msg.save_error"),
+                TranslationService.get("msg.save_failed", str(exc)),
+            )
 
         self.refresh_sidebar()
         messagebox.showinfo(
@@ -466,17 +543,29 @@ class MainWindow(ctk.CTk):
             TranslationService.get("msg.delete_confirm"),
             TranslationService.get("msg.delete_confirm_text")
         ):
-            self.repo.delete_note(self.current_note.id)
-            self.prepare_new("Text")
-            self.refresh_sidebar()
+            try:
+                self.repo.delete_note(self.current_note.id)
+                self.prepare_new("Text")
+                self.refresh_sidebar()
+            except Exception as exc:
+                messagebox.showerror(
+                    TranslationService.get("msg.save_error"),
+                    TranslationService.get("msg.delete_error", str(exc)),
+                )
 
     def delete_folder_by_id(self, folder_id, folder_name):
         prompt = TranslationService.get("msg.delete_folder_confirm", folder_name)
         if messagebox.askyesno(TranslationService.get("msg.delete_confirm"), prompt):
-            self.repo.delete_folder(folder_id)
-            if self.current_note and self.current_note.folder_id == folder_id:
-                self.current_note.folder_id = None
-            self.refresh_sidebar()
+            try:
+                self.repo.delete_folder(folder_id)
+                if self.current_note and self.current_note.folder_id == folder_id:
+                    self.current_note.folder_id = None
+                self.refresh_sidebar()
+            except Exception as exc:
+                messagebox.showerror(
+                    TranslationService.get("msg.save_error"),
+                    TranslationService.get("msg.delete_folder_error", str(exc)),
+                )
 
     def handle_undo(self):
         self.editor.undo_text()
@@ -499,6 +588,10 @@ class MainWindow(ctk.CTk):
 
     def handle_search(self, event=None):
         keyword = self.sidebar.search_entry.get().strip().lower()
+        if not keyword:
+            self.refresh_sidebar()
+            return
+
         notes = []
         for note in self.repo.get_all_notes():
             title_match = keyword in note.get('title', '').lower()
@@ -586,6 +679,7 @@ class MainWindow(ctk.CTk):
     # Language
     # =========================
     def handle_language_change(self, lang_code):
+        editor_state = self._capture_editor_state()
         try:
             self.wm_attributes("-alpha", 0)
         except Exception:
@@ -597,7 +691,7 @@ class MainWindow(ctk.CTk):
 
         restore_note_id = self.current_note.id if self.current_note else None
         self._update_title()
-        self._build_ui(restore_note_id=restore_note_id)
+        self._build_ui(restore_note_id=restore_note_id, restore_state=editor_state)
 
         self.update_idletasks()
         try:
@@ -609,7 +703,12 @@ class MainWindow(ctk.CTk):
     # Reminder + Calendar
     # =========================
     def handle_reminder_due(self, note_dict, is_deadline=False):
+        if self._closing:
+            return
+
         def show_notification():
+            if self._closing:
+                return
             note_title = note_dict.get('title', TranslationService.get("sidebar.no_title"))
             if is_deadline:
                 title = TranslationService.get("deadline.title")
@@ -636,6 +735,7 @@ class MainWindow(ctk.CTk):
     # Theme
     # =========================
     def handle_theme_change(self, key, value):
+        editor_state = self._capture_editor_state()
         try:
             self.wm_attributes("-alpha", 0)
         except Exception:
@@ -656,7 +756,7 @@ class MainWindow(ctk.CTk):
             ThemeManager.set_active_theme(value)
             self.configure(fg_color=ThemeManager.get("grid_bg"))
 
-        self._build_ui(restore_note_id=restore_note_id)
+        self._build_ui(restore_note_id=restore_note_id, restore_state=editor_state)
 
         self.update_idletasks()
         try:
@@ -667,39 +767,55 @@ class MainWindow(ctk.CTk):
     # =========================
     # Export
     # =========================
-    def _current_editor_note_for_export(self):
-        data = self.editor.get_data()
+    def _prepare_note_for_export(self):
+        data = self.editor.get_data() if getattr(self, "editor", None) else {}
+        current_note = self.current_note
         return SimpleNamespace(
-            title=data.get("title") or self.current_note.title,
-            content=data.get("content", self.current_note.content),
-            reminder_at=data.get("reminder_at"),
-            deadline_at=data.get("deadline_at"),
+            title=data.get("title") or getattr(current_note, "title", ""),
+            content=data.get("content", getattr(current_note, "content", "")),
+            reminder_at=data.get("reminder_at", getattr(current_note, "reminder_at", None)),
+            deadline_at=data.get("deadline_at", getattr(current_note, "deadline_at", None)),
         )
 
-    def export_md(self):
-        if not self.current_note:
-            return messagebox.showwarning(
+    def _current_editor_note_for_export(self):
+        return MainWindow._prepare_note_for_export(self)
+
+    def _get_exportable_note(self):
+        note = self._prepare_note_for_export()
+        if not note.title and not self._content_to_plain_text(note.content).strip():
+            messagebox.showwarning(
                 TranslationService.get("msg.export_no_note"),
                 TranslationService.get("msg.export_no_note_text")
             )
+            return None
+        return note
+
+    def export_md(self):
+        note = self._get_exportable_note()
+        if note is None:
+            return
         path = filedialog.asksaveasfilename(defaultextension=".md", filetypes=[("Markdown", "*.md")])
         if path:
-            self.export_service.export_to_markdown(self._current_editor_note_for_export(), path)
-            messagebox.showinfo(
-                TranslationService.get("msg.export_success"),
-                TranslationService.get("msg.export_success_text", path=path)
-            )
+            try:
+                self.export_service.export_to_markdown(note, path)
+                messagebox.showinfo(
+                    TranslationService.get("msg.export_success"),
+                    TranslationService.get("msg.export_success_text", path=path)
+                )
+            except Exception as exc:
+                messagebox.showerror(
+                    TranslationService.get("msg.export_md_error"),
+                    TranslationService.get("msg.export_md_error_text", error=str(exc))
+                )
 
     def export_pdf(self):
-        if not self.current_note:
-            return messagebox.showwarning(
-                TranslationService.get("msg.export_no_note"),
-                TranslationService.get("msg.export_no_note_text")
-            )
+        note = self._get_exportable_note()
+        if note is None:
+            return
         path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
         if path:
             try:
-                self.export_service.export_to_pdf(self._current_editor_note_for_export(), path)
+                self.export_service.export_to_pdf(note, path)
                 messagebox.showinfo(
                     TranslationService.get("msg.export_success"),
                     TranslationService.get("msg.export_success_text", path=path)
@@ -711,7 +827,38 @@ class MainWindow(ctk.CTk):
                 )
 
     def on_close(self):
-        self.iconify()
+        self.shutdown()
+
+    def shutdown(self):
+        """Stop background work, close SQLite, and destroy the window once."""
+        if self._closing:
+            return
+        self._closing = True
+
+        reminder_service = getattr(self, "reminder_service", None)
+        if reminder_service is not None:
+            try:
+                reminder_service.stop()
+            except Exception as exc:
+                print(f"Could not stop ReminderService: {exc}")
+
+        database = getattr(getattr(self, "repo", None), "db", None)
+        if database is not None:
+            try:
+                database.close()
+            except Exception as exc:
+                print(f"Could not close database: {exc}")
+
+        try:
+            for callback_id in self.tk.call("after", "info"):
+                self.after_cancel(callback_id)
+        except (AttributeError, TypeError, tk.TclError):
+            pass
+
+        try:
+            self.destroy()
+        except tk.TclError:
+            pass
 
     def import_from_file(self):
         file_path = filedialog.askopenfilename(
