@@ -32,7 +32,7 @@ class MainWindow(ctk.CTk):
         self.calendar_month = datetime.date.today().replace(day=1)
         self._ui_built = False
 
-        self.title("Engraver Note App - Full Features")
+        self.title("ENGRAVER")
         self.geometry("1200x760")
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
@@ -265,15 +265,14 @@ class MainWindow(ctk.CTk):
         self.pending_folder_id = None
         self.editor.set_data("", "", note_type, reminder_at=None, deadline_at=None, is_locked=False)
 
-    def prepare_new_in_folder(self, folder_id, folder_name):
-        """Hỏi người dùng loại Note và chuẩn bị giao diện Editor trống."""
-        answer = messagebox.askyesnocancel("Tạo ghi chú mới", f"Bạn muốn tạo loại ghi chú nào trong thư mục '{folder_name}'?\n\n- Yes (Có): Text Note\n- No (Không): Checklist")
-        if answer is True: 
-            self.prepare_new("Text")
-            self.pending_folder_id = folder_id 
-        elif answer is False: 
-            self.prepare_new("Checklist")
-            self.pending_folder_id = folder_id
+    def create_new_folder(self, folder_name):
+        """Hứng tên thư mục từ Sidebar, lưu xuống DB và refresh giao diện"""
+        from tkinter import messagebox
+        try:
+            self.repo.create_folder(folder_name)
+            self.refresh_sidebar() 
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể tạo thư mục: {e}")
 
     def prepare_new_in_folder(self, folder_id, folder_name):
         from services.translation_service import TranslationService

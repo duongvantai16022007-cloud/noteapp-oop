@@ -18,7 +18,8 @@ class EditorFrame(ctk.CTkFrame):
         self,
         master
     ):
-        super().__init__(master, fg_color="transparent")
+        # Anchor the component into a unified obsidian foundation frame
+        super().__init__(master, fg_color=ThemeManager.get("popup_bg"))
         self.grid_rowconfigure(3, weight=1)
         self.grid_columnconfigure(0, weight=1)
         self.grid_propagate(False)
@@ -39,31 +40,37 @@ class EditorFrame(ctk.CTkFrame):
         self._reminder_placeholder = TranslationService.get("editor.reminder_placeholder")
         self._deadline_placeholder = TranslationService.get("editor.deadline_placeholder")
 
-        # Toolbar
-        self.toolbar = ctk.CTkFrame(self, fg_color="transparent", height=40)
-        self.toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        # --- Toolbar Section ---
+        # Breathing room top padding layout shift to naturally guide focus downward
+        self.toolbar = ctk.CTkFrame(self, fg_color="transparent", height=45)
+        self.toolbar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(25, 10))
 
+        # Tactile actions setup with refined geometric formatting properties
         btn_kwargs = dict(
-            fg_color=ThemeManager.get("btn_secondary"),
-            hover_color=ThemeManager.get("btn_secondary_hover"),
-            text_color=ThemeManager.get("text_primary")
+            fg_color=ThemeManager.get("btn_note"),
+            hover_color=ThemeManager.get("btn_note_hover"),
+            text_color=ThemeManager.get("text_primary"),
+            border_color=ThemeManager.get("grid_border"),
+            border_width=1,
+            corner_radius=6
         )
+        
         self.btn_bold = ctk.CTkButton(
-            self.toolbar, text="B", width=38,
+            self.toolbar, text="B", width=38, height=32,
             font=ctk.CTkFont(weight="bold"),
             command=lambda: self.apply_text_style("bold"), **btn_kwargs
         )
         self.btn_bold.pack(side="left", padx=(20, 3))
 
         self.btn_italic = ctk.CTkButton(
-            self.toolbar, text="I", width=38,
+            self.toolbar, text="I", width=38, height=32,
             font=ctk.CTkFont(slant="italic"),
             command=lambda: self.apply_text_style("italic"), **btn_kwargs
         )
         self.btn_italic.pack(side="left", padx=3)
 
         self.btn_underline = ctk.CTkButton(
-            self.toolbar, text="U", width=38,
+            self.toolbar, text="U", width=38, height=32,
             font=ctk.CTkFont(underline=True),
             command=lambda: self.apply_text_style("underline"), **btn_kwargs
         )
@@ -71,136 +78,197 @@ class EditorFrame(ctk.CTkFrame):
 
         self.btn_media = ctk.CTkButton(
             self.toolbar,
-            text=TranslationService.get("editor.insert_media"),
-            width=96,
+            text="＋ " + TranslationService.get("editor.insert_media"),
+            width=110, height=32,
             command=self.insert_media,
             **btn_kwargs
         )
         self.btn_media.pack(side="left", padx=(8, 3))
 
-        # Tìm kiếm chỉ trong nội dung của ghi chú đang mở.
+        # Content Search bar framed beautifully using card design elements
         self.content_search_entry = ctk.CTkEntry(
             self.toolbar,
-            placeholder_text="🔍 Tìm trong nội dung note...",
+            placeholder_text=TranslationService.get("editor.content_search_placeholder"),
             width=320,
+            height=32,
             fg_color=ThemeManager.get("cell_bg"),
             text_color=ThemeManager.get("text_primary"),
             border_color=ThemeManager.get("grid_border"),
-            border_width=3
+            border_width=1,
+            corner_radius=6
         )
         self.content_search_entry.pack(side="left", padx=(16, 5))
         self.content_search_entry.bind("<KeyRelease>", self.search_current_note)
         self.content_search_entry.bind("<Escape>", self.clear_content_search)
 
         self.btn_search_previous = ctk.CTkButton(
-            self.toolbar, text="‹", width=32,
+            self.toolbar, text="‹", width=32, height=32,
             command=lambda: self.navigate_content_search(-1), **btn_kwargs
         )
         self.btn_search_previous.pack(side="left", padx=(0, 3))
 
         self.btn_search_next = ctk.CTkButton(
-            self.toolbar, text="›", width=32,
+            self.toolbar, text="›", width=32, height=32,
             command=lambda: self.navigate_content_search(1), **btn_kwargs
         )
         self.btn_search_next.pack(side="left", padx=(0, 5))
 
         self.content_search_status = ctk.CTkLabel(
             self.toolbar, text="", width=48,
-            text_color=ThemeManager.get("text_secondary")
+            text_color=ThemeManager.get("text_secondary"),
+            font=ctk.CTkFont(size=12)
         )
         self.content_search_status.pack(side="left")
 
+        # --- Format Bar Section ---
         self.format_bar = ctk.CTkFrame(self, fg_color="transparent")
-        self.format_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        self.format_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 15), padx=20)
         self.format_bar.grid_columnconfigure(7, weight=0)
         self.format_bar.grid_columnconfigure(8, weight=1)
 
         menu_kwargs = dict(
-            fg_color=ThemeManager.get("btn_secondary"),
-            button_color=ThemeManager.get("btn_secondary"),
-            button_hover_color=ThemeManager.get("btn_secondary_hover"),
+            fg_color=ThemeManager.get("cell_bg"),
+            button_color=ThemeManager.get("btn_note"),
+            button_hover_color=ThemeManager.get("btn_note_hover"),
             text_color=ThemeManager.get("text_primary"),
             dropdown_fg_color=ThemeManager.get("popup_bg"),
             dropdown_text_color=ThemeManager.get("text_primary"),
-            dropdown_hover_color=ThemeManager.get("btn_secondary_hover")
+            dropdown_hover_color=ThemeManager.get("btn_note_hover"),
+            corner_radius=6
         )
 
-        ctk.CTkLabel(self.format_bar, text=TranslationService.get("editor.font"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=0, padx=(0, 6), sticky="w")
+        ctk.CTkLabel(
+            self.format_bar, 
+            text=TranslationService.get("editor.font").upper(), 
+            text_color=ThemeManager.get("text_primary"),
+            font=ctk.CTkFont(size=11, weight="bold")
+        ).grid(row=0, column=0, padx=(0, 6), sticky="w")
+        
         self.font_family_menu = ctk.CTkOptionMenu(
             self.format_bar, values=["Arial", "Helvetica", "Times New Roman", "Georgia", "Verdana", "Courier New"],
-            width=140, command=self.apply_font_family, **menu_kwargs
+            width=140, height=30, command=self.apply_font_family, **menu_kwargs
         )
         self.font_family_menu.set("Arial")
-        self.font_family_menu.grid(row=0, column=1, padx=(0, 10), sticky="w")
+        self.font_family_menu.grid(row=0, column=1, padx=(0, 15), sticky="w")
 
-        ctk.CTkLabel(self.format_bar, text=TranslationService.get("editor.size"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=2, padx=(0, 6), sticky="w")
+        ctk.CTkLabel(
+            self.format_bar, 
+            text=TranslationService.get("editor.size").upper(), 
+            text_color=ThemeManager.get("text_primary"),
+            font=ctk.CTkFont(size=11, weight="bold")
+        ).grid(row=0, column=2, padx=(0, 6), sticky="w")
+        
         self.font_size_menu = ctk.CTkOptionMenu(
             self.format_bar, values=["10", "11", "12", "14", "16", "18", "20", "24", "28", "32"],
-            width=72, command=self.apply_font_size, **menu_kwargs
+            width=72, height=30, command=self.apply_font_size, **menu_kwargs
         )
         self.font_size_menu.set("15")
-        self.font_size_menu.grid(row=0, column=3, padx=(0, 10), sticky="w")
+        self.font_size_menu.grid(row=0, column=3, padx=(0, 15), sticky="w")
 
-        ctk.CTkButton(self.format_bar, text=TranslationService.get("editor.text_color"), width=88, command=self.pick_text_color, **btn_kwargs).grid(row=0, column=4, padx=(0, 8), sticky="w")
-        ctk.CTkButton(self.format_bar, text=TranslationService.get("editor.highlight"), width=90, command=self.pick_highlight_color, **btn_kwargs).grid(row=0, column=5, padx=(0, 8), sticky="w")
+        # Re-introducing tactical border items explicitly for the buttons where they are native
+        btn_format_kwargs = btn_kwargs.copy()
+        
+        ctk.CTkButton(self.format_bar, text=TranslationService.get("editor.text_color"), width=90, height=30, command=self.pick_text_color, **btn_format_kwargs).grid(row=0, column=4, padx=(0, 8), sticky="w")
+        ctk.CTkButton(self.format_bar, text=TranslationService.get("editor.highlight"), width=90, height=30, command=self.pick_highlight_color, **btn_format_kwargs).grid(row=0, column=5, padx=(0, 15), sticky="w")
 
-        ctk.CTkLabel(self.format_bar, text=TranslationService.get("editor.zoom"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=6, padx=(0, 6), sticky="w")
-        self.document_zoom_slider = ctk.CTkSlider(self.format_bar, from_=50, to=200, number_of_steps=30, width=130)
+        ctk.CTkLabel(
+            self.format_bar, 
+            text=TranslationService.get("editor.zoom").upper(), 
+            text_color=ThemeManager.get("text_primary"),
+            font=ctk.CTkFont(size=11, weight="bold")
+        ).grid(row=0, column=6, padx=(0, 6), sticky="w")
+        
+        self.document_zoom_slider = ctk.CTkSlider(
+            self.format_bar, from_=50, to=200, number_of_steps=30, width=130,
+            button_color=ThemeManager.get("btn_note_hover"),
+            button_hover_color=ThemeManager.get("accent_primary")
+        )
         self.document_zoom_slider.set(100)
         self.document_zoom_slider.grid(row=0, column=7, padx=(0, 8), sticky="w")
         self.document_zoom_slider.bind("<ButtonRelease-1>", self.on_zoom_release)
         self.document_zoom_slider.configure(command=lambda value: self.on_zoom_release(None))
 
-        # Title
+        # --- Primary Title Header ---
         self.entry_title = ctk.CTkEntry(
             self, placeholder_text=TranslationService.get("editor.title_placeholder"),
             font=ctk.CTkFont(size=24, weight="bold"),
             border_width=0, fg_color="transparent",
             text_color=ThemeManager.get("text_primary")
         )
-        self.entry_title.grid(row=2, column=0, columnspan=2, pady=(0, 10), sticky="ew")
+        self.entry_title.grid(row=2, column=0, columnspan=2, pady=(0, 15), padx=20, sticky="ew")
 
-        # Content area (swaps between Textbox and Checklist)
-        self.content_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.content_container.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(0, 10))
+        # --- Content Box Layer (Dedicated Card Structs) ---
+        self.content_container = ctk.CTkFrame(
+            self, 
+            fg_color=ThemeManager.get("cell_bg"),
+            border_color=ThemeManager.get("grid_border"),
+            border_width=1,
+            corner_radius=8
+        )
+        self.content_container.grid(row=3, column=0, columnspan=2, sticky="nsew", pady=(0, 15), padx=20)
         self.content_container.grid_rowconfigure(0, weight=1)
         self.content_container.grid_columnconfigure(0, weight=1)
         self.content_container.grid_propagate(False)
 
         self._create_textbox_widget()
-        self.checklist_frame = ctk.CTkScrollableFrame(self.content_container, fg_color=ThemeManager.get("cell_bg"))
+        self.checklist_frame = ctk.CTkScrollableFrame(
+            self.content_container, 
+            fg_color="transparent"
+        )
 
-        # Metadata
+        # --- Metadata & Micro-Dressing Tags Bar ---
         self.meta_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.meta_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+        self.meta_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 10), padx=20)
         self.meta_frame.grid_columnconfigure(0, weight=1)
 
         entry_kwargs = dict(
             fg_color=ThemeManager.get("cell_bg"),
             text_color=ThemeManager.get("text_primary"),
             border_color=ThemeManager.get("grid_border"),
-            border_width=3
+            border_width=1,
+            corner_radius=6
         )
 
-        ctk.CTkLabel(self.meta_frame, text=TranslationService.get("editor.reminder_label"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=1, padx=(0, 8), sticky="e")
-        self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text=self._reminder_placeholder, width=140, **entry_kwargs)
+        ctk.CTkLabel(
+            self.meta_frame, 
+            text=TranslationService.get("editor.reminder_label").upper(), 
+            text_color=ThemeManager.get("text_secondary"),
+            font=ctk.CTkFont(size=11, weight="bold")
+        ).grid(row=0, column=1, padx=(0, 8), sticky="e")
+        
+        self.entry_reminder = ctk.CTkEntry(self.meta_frame, placeholder_text=self._reminder_placeholder, width=140, height=30, **entry_kwargs)
         self.entry_reminder.grid(row=0, column=2, padx=(0, 5), sticky="e")
-        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_reminder, TranslationService.get("editor.date_picker_reminder")), **btn_kwargs).grid(row=0, column=3, padx=(0, 15), sticky="e")
+        
+        # Meta Indicators aligned cleanly at the absolute tail-end with minimal shapes
+        ctk.CTkButton(self.meta_frame, text="📅", width=34, height=30, command=lambda: self.open_datetime_picker(self.entry_reminder, TranslationService.get("editor.date_picker_reminder")), **btn_kwargs).grid(row=0, column=3, padx=(0, 15), sticky="e")
 
-        ctk.CTkLabel(self.meta_frame, text=TranslationService.get("editor.deadline_label"), text_color=ThemeManager.get("text_primary")).grid(row=0, column=4, padx=(0, 8), sticky="e")
-        self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text=self._deadline_placeholder, width=140, **entry_kwargs)
+        ctk.CTkLabel(
+            self.meta_frame, 
+            text=TranslationService.get("editor.deadline_label").upper(), 
+            text_color=ThemeManager.get("text_secondary"),
+            font=ctk.CTkFont(size=11, weight="bold")
+        ).grid(row=0, column=4, padx=(0, 8), sticky="e")
+        
+        self.entry_deadline = ctk.CTkEntry(self.meta_frame, placeholder_text=self._deadline_placeholder, width=140, height=30, **entry_kwargs)
         self.entry_deadline.grid(row=0, column=5, padx=(0, 5), sticky="e")
-        ctk.CTkButton(self.meta_frame, text="📅", width=34, command=lambda: self.open_datetime_picker(self.entry_deadline, TranslationService.get("editor.date_picker_deadline")), **btn_kwargs).grid(row=0, column=6, padx=(0, 0), sticky="e")
+        
+        # Deadline calendar action button
+        ctk.CTkButton(self.meta_frame, text="📅", width=34, height=30, command=lambda: self.open_datetime_picker(self.entry_deadline, TranslationService.get("editor.date_picker_deadline")), **btn_kwargs).grid(row=0, column=6, padx=(0, 0), sticky="e")
         self.meta_frame.grid_columnconfigure((1, 6), weight=0)
 
-        # Checklist add-item bar
+        # --- Checklist Add-Item Interface ---
         self.add_item_frame = ctk.CTkFrame(self, fg_color="transparent")
-        self.new_item_entry = ctk.CTkEntry(self.add_item_frame, placeholder_text=TranslationService.get("editor.checklist_placeholder"), **entry_kwargs)
+        self.new_item_entry = ctk.CTkEntry(self.add_item_frame, placeholder_text=TranslationService.get("editor.checklist_placeholder"), height=32, **entry_kwargs)
         self.new_item_entry.pack(side="left", fill="x", expand=True, padx=(0, 10))
-        ctk.CTkButton(self.add_item_frame, text=TranslationService.get("editor.checklist_add"), width=80, command=self.add_checklist_item,
-                       fg_color=ThemeManager.get("accent_primary"),
-                       hover_color=ThemeManager.get("accent_primary_hover"),
-                       text_color=ThemeManager.get("text_on_accent")).pack(side="right")
+        
+        ctk.CTkButton(
+            self.add_item_frame, text="＋ " + TranslationService.get("editor.checklist_add"), 
+            width=90, height=32, command=self.add_checklist_item,
+            fg_color=ThemeManager.get("accent_primary"),
+            hover_color=ThemeManager.get("accent_primary_hover"),
+            text_color=ThemeManager.get("text_on_accent"),
+            corner_radius=6
+        ).pack(side="right")
         self.new_item_entry.bind("<Return>", lambda event: self._add_checklist_item_from_enter(event))
 
     def _create_textbox_widget(self):
@@ -208,10 +276,9 @@ class EditorFrame(ctk.CTkFrame):
             self.content_container,
             font=ctk.CTkFont(size=15),
             wrap="word", undo=True, autoseparators=True, maxundo=-1,
-            fg_color=ThemeManager.get("cell_bg"),
+            fg_color="transparent",
             text_color=ThemeManager.get("text_primary"),
-            border_color=ThemeManager.get("grid_border"),
-            border_width=3
+            border_width=0
         )
         self.textbox_content.configure(height=self._editor_default_height)
         self._configure_text_tags()
@@ -235,15 +302,21 @@ class EditorFrame(ctk.CTkFrame):
         widget.bind("<KeyRelease>", self._on_cursor_moved)
         widget.bind("<ButtonRelease-1>", self._on_cursor_moved)
 
+        def get_tk_color(key):
+            val = ThemeManager.get(key)
+            if isinstance(val, (list, tuple)):
+                return val[1] if ctk.get_appearance_mode() == "Dark" else val[0]
+            return val
+
         widget.tag_configure(
             "content_search_match",
-            background="#fde68a",
-            foreground="#111827"
+            background=get_tk_color("search_match_bg"),
+            foreground=get_tk_color("search_match_fg")
         )
         widget.tag_configure(
             "content_search_current",
-            background="#fb923c",
-            foreground="#111827"
+            background=get_tk_color("search_current_bg"),
+            foreground=get_tk_color("search_current_fg")
         )
         widget.tag_raise("content_search_match")
         widget.tag_raise("content_search_current")
@@ -320,7 +393,7 @@ class EditorFrame(ctk.CTkFrame):
             self._activate_content_search_match()
         else:
             self.content_search_status.configure(text="0/0")
-
+    ####
     def _activate_content_search_match(self):
         total = len(self._content_search_matches)
         if not total:
@@ -339,10 +412,16 @@ class EditorFrame(ctk.CTkFrame):
                     text_color=ThemeManager.get("accent_primary"),
                     border_color=ThemeManager.get("accent_primary")
                 )
+            def get_tk_color(key):
+                val = ThemeManager.get(key)
+                if isinstance(val, (list, tuple)):
+                    return val[1] if ctk.get_appearance_mode() == "Dark" else val[0]
+                return val
+
             current = self._content_search_matches[self._content_search_index]
             current["checkbox"].configure(
-                text_color=("#c2410c", "#fb923c"),
-                border_color=("#c2410c", "#fb923c")
+                text_color=get_tk_color("search_current_fg"),
+                border_color=get_tk_color("search_current_bg")
             )
             return
 
@@ -395,7 +474,7 @@ class EditorFrame(ctk.CTkFrame):
         )
         widget = self._text_widget()
         widget.configure(font=self._text_font)
-        widget.tag_configure("sel", background="#2563eb")
+        widget.tag_configure("sel", background=ThemeManager.get("selection_bg"))
 
     def _default_style(self):
         return dict(self._base_style)
@@ -715,7 +794,7 @@ class EditorFrame(ctk.CTkFrame):
                 str(exc),
                 parent=self
             )
-
+####
     def _remove_media(self, attachment):
         attachment_id = str(attachment.get("id", ""))
         media_widget = self._media_widgets.get(attachment_id)
@@ -754,11 +833,13 @@ class EditorFrame(ctk.CTkFrame):
         path = self.media_service.resolve_path(attachment.get("path"))
         kind = attachment.get("kind") or self.media_service.media_kind(path) or "media"
 
+        # Embedded media wrapper stylized using cell background properties
         card = ctk.CTkFrame(
             widget,
-            fg_color=ThemeManager.get("grid_bg"),
+            fg_color=ThemeManager.get("cell_bg"),
             border_width=1,
-            border_color=ThemeManager.get("grid_border")
+            border_color=ThemeManager.get("grid_border"),
+            corner_radius=6
         )
         name = str(attachment.get("name") or path.name)
 
@@ -785,7 +866,7 @@ class EditorFrame(ctk.CTkFrame):
             ctk.CTkLabel(
                 card,
                 text=f"{icon}  {name}",
-                font=ctk.CTkFont(size=15),
+                font=ctk.CTkFont(size=14, weight="bold"),
                 text_color=ThemeManager.get("text_primary")
             ).pack(padx=14, pady=(10, 4))
 
@@ -796,22 +877,34 @@ class EditorFrame(ctk.CTkFrame):
                 footer,
                 text=f"{name} · {self._format_file_size(attachment.get('size'))}",
                 anchor="w",
+                font=ctk.CTkFont(size=11),
                 text_color=ThemeManager.get("text_secondary")
             ).pack(side="left", padx=(0, 8))
+            
+        # Action tags mapped into high-contrast secondary glaze buttons
         ctk.CTkButton(
             footer,
             text=TranslationService.get("editor.open_media"),
-            width=48,
-            height=24,
+            width=58,
+            height=26,
+            fg_color=ThemeManager.get("btn_note"),
+            hover_color=ThemeManager.get("btn_note_hover"),
+            text_color=ThemeManager.get("text_primary"),
+            border_color=ThemeManager.get("grid_border"),
+            border_width=1,
+            corner_radius=4,
             command=lambda item=attachment: self._open_media(item)
         ).pack(side="left", padx=(0, 4))
+        
         ctk.CTkButton(
             footer,
             text="✕",
             width=28,
-            height=24,
-            fg_color="#b91c1c",
-            hover_color="#991b1b",
+            height=26,
+            fg_color=ThemeManager.get("accent_danger"),
+            hover_color=ThemeManager.get("accent_danger_hover"),
+            text_color=ThemeManager.get("text_on_accent"),
+            corner_radius=4,
             command=lambda item=attachment: self._remove_media(item)
         ).pack(side="left")
 
@@ -991,7 +1084,9 @@ class EditorFrame(ctk.CTkFrame):
             self._clear_inline_media()
             self._media_attachments = []
             self.checklist_frame.grid(row=0, column=0, sticky="nsew")
-            self.add_item_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(0, 10))
+            
+            # Breathing layout splits applied to the active checklist fields
+            self.add_item_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(15, 10), padx=20)
             self.btn_bold.configure(state="disabled")
             self.btn_italic.configure(state="disabled")
             self.font_family_menu.configure(state="disabled")
@@ -1036,12 +1131,19 @@ class EditorFrame(ctk.CTkFrame):
         if not text:
             return
         var = ctk.BooleanVar(value=is_done)
+        
+        # Micro-dressing applied to individual items, using punchy base states
         cb = ctk.CTkCheckBox(
             self.checklist_frame, text=text, variable=var,
             fg_color=ThemeManager.get("accent_primary"),
-            text_color=ThemeManager.get("text_primary")
+            hover_color=ThemeManager.get("btn_note_hover"),
+            text_color=ThemeManager.get("text_primary"),
+            border_color=ThemeManager.get("grid_border"),
+            border_width=1,
+            corner_radius=4,
+            font=ctk.CTkFont(size=14)
         )
-        cb.pack(anchor="w", pady=5, padx=10)
+        cb.pack(anchor="w", pady=6, padx=15)
         self.checklist_vars.append({
             "checkbox": cb,
             "var": var,
