@@ -4,11 +4,26 @@ class SearchEngine:
     def __init__(self, notes):
         self.notes = notes
 
+    @staticmethod
+    def _content_to_text(content):
+        if isinstance(content, dict):
+            return str(content.get("text", ""))
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    parts.append(str(item.get("content", "")))
+                else:
+                    parts.append(str(getattr(item, "content", item)))
+            return " ".join(parts)
+        return str(content or "")
+
     def search_by_keyword(self, keyword: str):
         keyword = keyword.lower()
         return [
             note for note in self.notes
-            if keyword in note.title.lower() or keyword in note.content.lower()
+            if keyword in note.title.lower()
+            or keyword in self._content_to_text(note.content).lower()
         ]
 
     def filter_by_tag(self, tag_name: str):

@@ -14,7 +14,8 @@ class ChecklistNote(base):
         is_locked=False,
         password_hash=None,
         password_salt=None,
-        reminder_notified=0
+        reminder_notified=0,
+        folder_id=None
     ):
         todo_list = []
         if content:
@@ -33,7 +34,8 @@ class ChecklistNote(base):
             is_locked=is_locked,
             password_hash=password_hash,
             password_salt=password_salt,
-            reminder_notified=reminder_notified
+            reminder_notified=reminder_notified,
+            folder_id=folder_id
         )
 
     def get_type(self):
