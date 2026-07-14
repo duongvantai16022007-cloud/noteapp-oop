@@ -1,0 +1,58 @@
+# =========================
+# Python & Môi trường
+# =========================
+# Các file bytecode do Python sinh ra
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Môi trường ảo (Virtual Environments)
+venv/
+env/
+.venv/
+.env
+
+# =========================
+# Dữ liệu dự án (Cực kỳ quan trọng)
+# =========================
+# File Database SQLite (Không đưa DB thực tế chứa dữ liệu người dùng lên Git)
+notes.db
+notes.db-journal
+*.sqlite3
+
+# Thư mục lưu trữ hình ảnh/âm thanh của MediaNote
+media/
+data/media/
+assets/fonts/*.pkl
+
+# Các file export sinh ra từ ExportService (PDF, Markdown)
+*.pdf
+# Nếu bạn có các file .md là tài liệu dự án (như README.md) thì đừng bỏ qua *.md
+# Chỉ bỏ qua thư mục chứa file export (nếu có) ví dụ: exports/
+exports/
+
+# =========================
+# IDE & Công cụ Editor
+# =========================
+# VS Code
+.vscode/
+
+# PyCharm / IntelliJ
+.idea/
+
+# =========================
+# Hệ điều hành (OS)
+# =========================
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+pyproject.toml
+uv.lock
+*.md
