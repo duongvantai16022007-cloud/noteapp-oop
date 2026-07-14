@@ -77,23 +77,26 @@ class NoteRepository:
         return folder_id
 
     def get_all_folders(self):
-        query = "SELECT * FROM folders ORDER BY name ASC"
-        return self.db.fetch_all(query)
+        return self.db.fetch_all("SELECT * FROM folders ORDER BY name ASC")
 
     def move_note_to_folder(self, note_id, folder_id):
-        """Cập nhật folder_id của Note. Nếu folder_id=None nghĩa là đưa ra ngoài thư mục gốc."""
+        """Move a note to a folder; None means the root folder."""
         updated_at = datetime.datetime.now().replace(microsecond=0).isoformat()
         query = "UPDATE notes SET folder_id = ?, updated_at = ? WHERE id = ?"
         self.db.execute_query(query, (folder_id, updated_at, note_id))
 
     def get_notes_by_folder(self, folder_id):
-        """Lấy danh sách các note nằm trong một folder cụ thể"""
         if folder_id is None:
-            query = "SELECT * FROM notes WHERE (folder_id IS NULL OR folder_id = '') AND (deleted_at IS NULL OR deleted_at = '')"
-            return [self._row_to_note_dict(row) for row in self.db.fetch_all(query)]
+            query = """SELECT * FROM notes
+                       WHERE (folder_id IS NULL OR folder_id = '')
+                         AND (deleted_at IS NULL OR deleted_at = '')"""
+            rows = self.db.fetch_all(query)
         else:
-            query = "SELECT * FROM notes WHERE folder_id = ? AND (deleted_at IS NULL OR deleted_at = '')"
-            return [self._row_to_note_dict(row) for row in self.db.fetch_all(query, (folder_id,))]
+            query = """SELECT * FROM notes
+                       WHERE folder_id = ?
+                         AND (deleted_at IS NULL OR deleted_at = '')"""
+            rows = self.db.fetch_all(query, (folder_id,))
+        return [self._row_to_note_dict(row) for row in rows]
 
     def get_note(self, note_id):
         query = "SELECT * FROM notes WHERE id = ?"
@@ -234,8 +237,9 @@ class NoteRepository:
         self.db.execute_query(query, (cutoff,))
 
     def delete_folder(self, folder_id):
-        """Xóa thư mục và đưa toàn bộ ghi chú bên trong ra thư mục gốc."""
-        query_update_notes = "UPDATE notes SET folder_id = NULL WHERE folder_id = ?"
-        self.db.execute_query(query_update_notes, (folder_id,))
-        query_delete_folder = "DELETE FROM folders WHERE id = ?"
-        self.db.execute_query(query_delete_folder, (folder_id,))
+        """Delete a folder and move its notes back to the root folder."""
+        self.db.execute_query(
+            "UPDATE notes SET folder_id = NULL WHERE folder_id = ?",
+            (folder_id,),
+        )
+        self.db.execute_query("DELETE FROM folders WHERE id = ?", (folder_id,))

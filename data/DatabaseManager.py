@@ -83,6 +83,15 @@ class DatabaseManager:
         self._add_column_if_not_exists("notes", "reminder_notified", "INTEGER DEFAULT 0")
         self._add_column_if_not_exists("notes", "deadline_notified", "INTEGER DEFAULT 0")
         self._add_column_if_not_exists("notes", "deleted_at", "TEXT")
+        self._add_column_if_not_exists("notes", "folder_id", "TEXT")
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS folders (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            )
+        ''')
 
         # Lưu cấu hình UI như theme sáng/tối, màu chủ đạo.
         cursor.execute('''
@@ -100,18 +109,7 @@ class DatabaseManager:
         existing_columns = [row[1] for row in cursor.fetchall()]
         if column_name not in existing_columns:
             cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
-            
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS folders (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                created_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute("PRAGMA table_info(notes)")
-        columns = [row['name'] for row in cursor.fetchall()]
-        if 'folder_id' not in columns:
-            cursor.execute("ALTER TABLE notes ADD COLUMN folder_id TEXT")
+
     def execute_query(self, query, params=()):
         """
         Dùng khi muốn chỉnh sửa database.
