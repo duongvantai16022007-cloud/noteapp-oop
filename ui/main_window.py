@@ -637,21 +637,50 @@ class MainWindow(ctk.CTk):
         else:  
             pass
 
-    def _minimize_to_tray(self):
-        import pystray
-        from PIL import Image
-        import threading
-        self.withdraw()
+    def quit_app_completely(self, icon=None, item=None):
+        import os
+        if hasattr(self, 'tray_icon') and self.tray_icon is not None:
+            try:
+                self.tray_icon.stop()
+            except Exception:
+                pass
         try:
-            image = Image.open("icon.png") 
+            self.quit()
+            self.destroy()
         except Exception:
-            image = Image.new('RGB', (64, 64), color=(0, 0, 0))
-        menu = pystray.Menu(
-            pystray.MenuItem("Mở Engraver", self.show_window_from_tray),
-            pystray.MenuItem("Thoát hoàn toàn", self.quit_app_completely)
-        )
-        self.tray_icon = pystray.Icon("Engraver", image, "Engraver Note App", menu)
-        threading.Thread(target=self.tray_icon.run, daemon=True).start()
+            pass
+        os._exit(0)
+
+    def _minimize_to_tray(self):
+        try:
+            self.withdraw()  
+            import pystray
+            from PIL import Image
+            import threading
+            try:
+                image = Image.open("icon.png")
+            except Exception:
+                image = Image.new('RGB', (64, 64), color=(0, 0, 0))
+            menu = pystray.Menu(
+                pystray.MenuItem("Mở Engraver", self.show_window_from_tray),
+                pystray.MenuItem("Thoát hoàn toàn", self.quit_app_completely)
+            )
+            self.tray_icon = pystray.Icon("Engraver", image, "Engraver Note App", menu)
+            threading.Thread(target=self.tray_icon.run, daemon=True).start()
+            
+        except Exception as e:
+            from tkinter import messagebox
+            self.deiconify() 
+            messagebox.showerror("Lỗi chạy ngầm", f"Không thể thu nhỏ ứng dụng:\n{str(e)}")
+
+    def show_window_from_tray(self, icon=None, item=None):
+        try:
+            if hasattr(self, 'tray_icon') and self.tray_icon is not None:
+                self.tray_icon.stop()
+        except Exception:
+            pass
+        self.after(0, self.deiconify)
+        
     def import_from_file(self):
         """Mở file txt, md, docx hoặc pdf, bóc toàn bộ văn bản và ảnh đính kèm."""
         import os
