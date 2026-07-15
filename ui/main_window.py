@@ -620,8 +620,38 @@ class MainWindow(ctk.CTk):
                 messagebox.showerror("Lỗi PDF", f"Không xuất được PDF: {e}")
 
     def on_close(self):
-        self.iconify()
-        
+        from tkinter import messagebox
+        answer = messagebox.askyesnocancel(
+            "Tùy chọn thoát",
+            "Bạn muốn tắt ứng dụng như thế nào?\n\n"
+            "• Chọn [Yes / Có]: Thoát hoàn toàn ứng dụng.\n"
+            "• Chọn [No / Không]: Vẫn chạy ngầm dưới góc màn hình (System Tray).\n"
+            "• Chọn [Cancel / Hủy]: Trở lại ứng dụng."
+        )
+        if answer is True: 
+            self.quit_app_completely()
+            
+        elif answer is False:  
+            self._minimize_to_tray()
+            
+        else:  
+            pass
+
+    def _minimize_to_tray(self):
+        import pystray
+        from PIL import Image
+        import threading
+        self.withdraw()
+        try:
+            image = Image.open("icon.png") 
+        except Exception:
+            image = Image.new('RGB', (64, 64), color=(0, 0, 0))
+        menu = pystray.Menu(
+            pystray.MenuItem("Mở Engraver", self.show_window_from_tray),
+            pystray.MenuItem("Thoát hoàn toàn", self.quit_app_completely)
+        )
+        self.tray_icon = pystray.Icon("Engraver", image, "Engraver Note App", menu)
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
     def import_from_file(self):
         """Mở file txt, md, docx hoặc pdf, bóc toàn bộ văn bản và ảnh đính kèm."""
         import os
