@@ -16,9 +16,53 @@ class MediaService:
     MAX_FILE_SIZE = 100 * 1024 * 1024
 
     def __init__(self, media_dir=None, project_root=None):
-        self.project_root = Path(project_root or Path(__file__).resolve().parent.parent)
+        if project_root is not None:
+            default_root = Path(project_root)
+        elif getattr(sys, "frozen", False):
+            default_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Engraver"
+        else:
+            default_root = Path(__file__).resolve().parent.parent
+        self.project_root = default_root.resolve()
         self.media_dir = Path(media_dir or self.project_root / "data" / "media")
         self.media_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _default_storage_roots():
+        """Return source and packaged storage roots without relying on CWD."""
+        project_root = Path(__file__).resolve().parent.parent
+        user_root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Engraver"
+        preferred_root = user_root if getattr(sys, "frozen", False) else project_root
+        return preferred_root.resolve(), project_root.resolve(), user_root.resolve()
+
+    @classmethod
+    def resolve_stored_path(cls, stored_path, project_root=None):
+        """Resolve current and legacy media paths across source/packaged builds."""
+        path = Path(str(stored_path or ""))
+        if path.is_absolute():
+            return path.resolve()
+
+        roots = []
+        if project_root is not None:
+            roots.append(Path(project_root).resolve())
+        roots.extend(cls._default_storage_roots())
+
+        candidates = []
+        for root in roots:
+            candidate = (root / path).resolve()
+            if candidate not in candidates:
+                candidates.append(candidate)
+
+            # FileSystemManager and old app versions persisted media/<name>,
+            # while the current MediaService persists data/media/<name>.
+            if path.parts and path.parts[0].lower() == "media":
+                legacy_candidate = (root / "data" / path).resolve()
+                if legacy_candidate not in candidates:
+                    candidates.append(legacy_candidate)
+
+        for candidate in candidates:
+            if candidate.is_file():
+                return candidate
+        return candidates[0]
 
     @classmethod
     def media_kind(cls, file_path):
@@ -76,10 +120,7 @@ class MediaService:
         }
 
     def resolve_path(self, stored_path):
-        path = Path(str(stored_path or ""))
-        if not path.is_absolute():
-            path = self.project_root / path
-        return path.resolve()
+        return self.resolve_stored_path(stored_path, project_root=self.project_root)
 
     def open_file(self, stored_path):
         path = self.resolve_path(stored_path)

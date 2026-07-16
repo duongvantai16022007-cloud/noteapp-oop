@@ -2,6 +2,7 @@ import re
 import tkinter as tk
 import tkinter.font as tkfont
 import uuid
+from urllib.parse import quote, unquote
 
 import customtkinter as ctk
 from tkinter import ttk, messagebox, colorchooser, filedialog
@@ -29,6 +30,8 @@ class EditorFrame(ctk.CTkFrame):
         self._editor_default_height = 420
         self._font_cache = {}
         self._font_cache_initialized = set()
+        self.default_font_family = self._customtkinter_default_font_family()
+        self.available_font_families = self._available_font_families()
         self.zoom_factor = 1.0
         self._content_search_matches = []
         self._content_search_index = -1
@@ -145,10 +148,10 @@ class EditorFrame(ctk.CTkFrame):
         ).grid(row=0, column=0, padx=(0, 6), sticky="w")
         
         self.font_family_menu = ctk.CTkOptionMenu(
-            self.format_bar, values=["Arial", "Helvetica", "Times New Roman", "Georgia", "Verdana", "Courier New"],
+            self.format_bar, values=self.available_font_families,
             width=140, height=30, command=self.apply_font_family, **menu_kwargs
         )
-        self.font_family_menu.set("Arial")
+        self.font_family_menu.set(self.default_font_family)
         self.font_family_menu.grid(row=0, column=1, padx=(0, 15), sticky="w")
 
         ctk.CTkLabel(
@@ -159,7 +162,7 @@ class EditorFrame(ctk.CTkFrame):
         ).grid(row=0, column=2, padx=(0, 6), sticky="w")
         
         self.font_size_menu = ctk.CTkOptionMenu(
-            self.format_bar, values=["10", "11", "12", "14", "16", "18", "20", "24", "28", "32"],
+            self.format_bar, values=["10", "11", "12", "14", "15", "16", "18", "20", "24", "28", "32"],
             width=72, height=30, command=self.apply_font_size, **menu_kwargs
         )
         self.font_size_menu.set("15")
@@ -270,6 +273,21 @@ class EditorFrame(ctk.CTkFrame):
             corner_radius=6
         ).pack(side="right")
         self.new_item_entry.bind("<Return>", lambda event: self._add_checklist_item_from_enter(event))
+
+    def _customtkinter_default_font_family(self):
+        """Read CustomTkinter's platform default instead of hardcoding Arial."""
+        font = ctk.CTkFont()
+        return str(font.cget("family"))
+
+    def _available_font_families(self):
+        """Expose every font family that CTkFont can use through Tk."""
+        families = {
+            str(family).strip()
+            for family in tkfont.families(self)
+            if str(family).strip()
+        }
+        families.add(self.default_font_family)
+        return sorted(families, key=str.casefold)
 
     def _create_textbox_widget(self):
         self.textbox_content = ctk.CTkTextbox(
@@ -448,7 +466,7 @@ class EditorFrame(ctk.CTkFrame):
             widget = self._text_widget()
             cursor = widget.index("insert")
             style = self._style_at_index(cursor)
-            family = style.get("family", "Arial")
+            family = style.get("family", self.default_font_family)
             if family != self.font_family_menu.get():
                 self.font_family_menu.set(family)
             size = str(style.get("size", 15))
@@ -462,7 +480,7 @@ class EditorFrame(ctk.CTkFrame):
 
     def _configure_text_tags(self):
         self._base_style = {
-            "family": self.font_family_menu.get() if hasattr(self, "font_family_menu") else "Arial",
+            "family": self.font_family_menu.get() if hasattr(self, "font_family_menu") else self.default_font_family,
             "size": int(self.font_size_menu.get()) if hasattr(self, "font_size_menu") else 15,
             "bold": False, "italic": False, "underline": False,
             "foreground": "", "highlight": ""
@@ -482,7 +500,7 @@ class EditorFrame(ctk.CTkFrame):
     def _normalize_style(self, style):
         normalized = self._default_style()
         normalized.update(style or {})
-        normalized["family"] = str(normalized.get("family") or "Arial")
+        normalized["family"] = str(normalized.get("family") or self.default_font_family)
         normalized["size"] = max(8, int(normalized.get("size") or 15))
         normalized["bold"] = bool(normalized.get("bold"))
         normalized["italic"] = bool(normalized.get("italic"))
@@ -492,7 +510,7 @@ class EditorFrame(ctk.CTkFrame):
         return normalized
 
     def _sanitize_tag_part(self, value):
-        return str(value).replace("|", "_").replace(" ", "_").replace("\n", "_")
+        return quote(str(value), safe="")
 
     def _style_tag_name(self, style):
         style = self._normalize_style(style)
@@ -509,13 +527,13 @@ class EditorFrame(ctk.CTkFrame):
             return None
         _, family, size, bold, italic, underline, foreground, highlight = parts
         return {
-            "family": family.replace("_", " "),
+            "family": unquote(family),
             "size": int(size),
             "bold": bool(int(bold)),
             "italic": bool(int(italic)),
             "underline": bool(int(underline)),
-            "foreground": "" if foreground == "none" else foreground,
-            "highlight": "" if highlight == "none" else highlight,
+            "foreground": "" if foreground == "none" else unquote(foreground),
+            "highlight": "" if highlight == "none" else unquote(highlight),
         }
 
     def _ensure_style_tag(self, tag_name, style):

@@ -27,7 +27,6 @@ assets/fonts/*.pkl
 
 # Các file export sinh ra từ ExportService (PDF, Markdown)
 *.pdf
-# Nếu bạn có các file .md là tài liệu dự án (như README.md) thì đừng bỏ qua *.md
 # Chỉ bỏ qua thư mục chứa file export (nếu có) ví dụ: exports/
 exports/
 
@@ -56,3 +55,8 @@ Desktop.ini
 pyproject.toml
 uv.lock
 *.md
+
+# File build và file thử nghiệm chỉ dùng trên máy local
+NoteApp.exe
+link.txt
+testttt.py

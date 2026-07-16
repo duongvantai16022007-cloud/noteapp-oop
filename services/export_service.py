@@ -1,9 +1,14 @@
 import shutil
+import os
 import tempfile
+import json
+import re
 from pathlib import Path
+from urllib.parse import quote
 
 from fpdf import FPDF, fpdf as fpdf_module
 from PIL import Image, UnidentifiedImageError
+from services.media_service import MediaService
 
 
 class ExportService:
@@ -56,10 +61,7 @@ class ExportService:
 
     @staticmethod
     def _resolve_media_path(stored_path):
-        path = Path(str(stored_path or ""))
-        if not path.is_absolute():
-            path = Path(__file__).resolve().parent.parent / path
-        return path.resolve()
+        return MediaService.resolve_stored_path(stored_path)
 
     def _content_to_text(self, note):
         content = note.content
@@ -103,7 +105,10 @@ class ExportService:
                 target_name = f"{Path(original_name).stem}_{index}{Path(original_name).suffix}"
             used_names.add(target_name.lower())
             shutil.copy2(source, assets_dir / target_name)
-            relative_target = f"{assets_dir.name}/{target_name}".replace(" ", "%20")
+            relative_target = quote(
+                f"{assets_dir.name}/{target_name}",
+                safe="/"
+            )
             if item.get("kind") == "image":
                 markdown_link = f"![{original_name}]({relative_target})"
             else:
@@ -243,3 +248,157 @@ class ExportService:
         with tempfile.TemporaryDirectory(prefix="noteapp-pdf-") as temp_dir:
             self._write_pdf_content(pdf, note, font_family, temp_dir)
             pdf.output(file_path)
+
+    @staticmethod
+    def _safe_archive_name(value, fallback="media"):
+        name = Path(str(value or "")).name.strip()
+        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", name)
+        name = name.rstrip(". ")
+        return name or fallback
+
+    def _media_for_archive(self, note):
+        content = getattr(note, "content", None)
+        media = content.get("media", []) if isinstance(content, dict) else []
+        resolved = []
+        for item in media:
+            if not isinstance(item, dict) or not item.get("path"):
+                continue
+            source = self._resolve_media_path(item["path"])
+            if source.is_file():
+                resolved.append((item, source))
+        return resolved
+
+    def export_media_archive(self, note, file_path, password):
+        """Create an AES-256 encrypted ZIP containing a note's media folder."""
+        if not password or len(password) < 4:
+            raise ValueError("Mật khẩu ZIP phải có ít nhất 4 ký tự")
+
+        try:
+            import pyzipper
+        except ImportError as exc:
+            raise RuntimeError(
+                "Thiếu thư viện pyzipper. Hãy chạy: pip install -r requirements.txt"
+            ) from exc
+
+        media = self._media_for_archive(note)
+        if not media:
+            raise ValueError("Ghi chú không có file media hợp lệ để đóng gói")
+
+        output_path = Path(file_path).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        folder_name = self._safe_archive_name(
+            f"{getattr(note, 'title', '')}_media",
+            "note_media"
+        )
+        used_names = set()
+        manifest_items = []
+
+        temp_file = tempfile.NamedTemporaryFile(
+            prefix=f".{output_path.stem}-",
+            suffix=".tmp",
+            dir=output_path.parent,
+            delete=False,
+        )
+        temp_path = Path(temp_file.name)
+        temp_file.close()
+
+        try:
+            with pyzipper.AESZipFile(
+                temp_path,
+                "w",
+                compression=pyzipper.ZIP_DEFLATED,
+                encryption=pyzipper.WZ_AES,
+            ) as archive:
+                archive.setpassword(password.encode("utf-8"))
+                archive.setencryption(pyzipper.WZ_AES, nbits=256)
+
+                for index, (item, source) in enumerate(media, start=1):
+                    original_name = self._safe_archive_name(
+                        item.get("name") or source.name,
+                        f"media-{index}{source.suffix}"
+                    )
+                    target_name = original_name
+                    suffix_number = 2
+                    while target_name.casefold() in used_names:
+                        target_name = (
+                            f"{Path(original_name).stem}_{suffix_number}"
+                            f"{Path(original_name).suffix}"
+                        )
+                        suffix_number += 1
+                    used_names.add(target_name.casefold())
+                    archive_name = f"{folder_name}/{target_name}"
+                    archive.write(source, arcname=archive_name)
+                    manifest_items.append({
+                        "name": target_name,
+                        "kind": item.get("kind") or MediaService.media_kind(source) or "media",
+                        "size": source.stat().st_size,
+                    })
+
+                archive.writestr(
+                    f"{folder_name}/manifest.json",
+                    json.dumps(
+                        {
+                            "note_title": str(getattr(note, "title", "")),
+                            "files": manifest_items,
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ).encode("utf-8"),
+                )
+            os.replace(temp_path, output_path)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            raise
+
+        return len(media)
+
+    @staticmethod
+    def _validated_archive_members(archive, destination_dir):
+        """Reject absolute and parent-traversal paths before extraction."""
+        destination = Path(destination_dir).expanduser().resolve()
+        members = archive.infolist()
+        for member in members:
+            member_name = str(member.filename).replace("\\", "/")
+            parts = [part for part in member_name.split("/") if part not in ("", ".")]
+            if (
+                member_name.startswith("/")
+                or any(part == ".." for part in parts)
+                or (parts and parts[0].endswith(":"))
+            ):
+                raise ValueError(f"ZIP chứa đường dẫn không an toàn: {member.filename}")
+
+            target = (destination / Path(*parts)).resolve()
+            try:
+                target.relative_to(destination)
+            except ValueError as exc:
+                raise ValueError(
+                    f"ZIP chứa đường dẫn vượt ngoài thư mục đích: {member.filename}"
+                ) from exc
+        return members
+
+    def extract_media_archive(self, file_path, destination_dir, password):
+        """Extract an AES media ZIP after validating its member paths."""
+        if not password:
+            raise ValueError("Mật khẩu ZIP không được để trống")
+
+        try:
+            import pyzipper
+        except ImportError as exc:
+            raise RuntimeError(
+                "Thiếu thư viện pyzipper. Hãy chạy: pip install -r requirements.txt"
+            ) from exc
+
+        archive_path = Path(file_path).expanduser().resolve()
+        if not archive_path.is_file():
+            raise FileNotFoundError(f"Không tìm thấy file ZIP: {archive_path.name}")
+
+        destination = Path(destination_dir).expanduser().resolve()
+        destination.mkdir(parents=True, exist_ok=True)
+        with pyzipper.AESZipFile(archive_path, "r") as archive:
+            members = self._validated_archive_members(archive, destination)
+            archive.extractall(
+                path=destination,
+                members=members,
+                pwd=password.encode("utf-8"),
+            )
+        return sum(1 for member in members if not member.is_dir())

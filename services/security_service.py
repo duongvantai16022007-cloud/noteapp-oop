@@ -5,7 +5,7 @@ import os
 
 try:
     from cryptography.fernet import Fernet
-except ImportError:  # cryptography không bắt buộc cho tính năng khóa bằng mật khẩu.
+except ImportError:  
     Fernet = None
 
 class SecurityManager:

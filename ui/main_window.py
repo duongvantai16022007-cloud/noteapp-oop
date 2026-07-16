@@ -111,6 +111,8 @@ class MainWindow(ctk.CTk):
         file_menu.add_separator()
         file_menu.add_command(label=_("menu.file.export_md"), command=self.export_md)
         file_menu.add_command(label=_("menu.file.export_pdf"), command=self.export_pdf)
+        file_menu.add_command(label=_("menu.file.export_media_zip"), command=self.export_media_zip)
+        file_menu.add_command(label=_("menu.file.open_media_zip"), command=self.open_media_zip)
         menubar.add_cascade(label=_("menu.file"), menu=file_menu)
         file_menu.add_separator()
         file_menu.add_command(label="Nhập từ file (Import)...", command=self.import_from_file)
@@ -605,8 +607,11 @@ class MainWindow(ctk.CTk):
             return messagebox.showwarning("Lỗi", "Chọn ghi chú để xuất!")
         path = filedialog.asksaveasfilename(defaultextension=".md", filetypes=[("Markdown", "*.md")])
         if path:
-            self.export_service.export_to_markdown(self._current_editor_note_for_export(), path)
-            messagebox.showinfo("Thành công", f"Đã xuất tại: {path}")
+            try:
+                self.export_service.export_to_markdown(self._current_editor_note_for_export(), path)
+                messagebox.showinfo("Thành công", f"Đã xuất tại: {path}")
+            except Exception as exc:
+                messagebox.showerror("Lỗi Markdown", f"Không xuất được Markdown: {exc}")
 
     def export_pdf(self):
         if not self.current_note:
@@ -618,6 +623,116 @@ class MainWindow(ctk.CTk):
                 messagebox.showinfo("Thành công", f"Đã xuất tại: {path}")
             except Exception as e:
                 messagebox.showerror("Lỗi PDF", f"Không xuất được PDF: {e}")
+
+    def export_media_zip(self):
+        if not self.current_note:
+            return messagebox.showwarning(
+                TranslationService.get("msg.export_no_note"),
+                TranslationService.get("msg.export_no_note_text")
+            )
+
+        password = simpledialog.askstring(
+            TranslationService.get("msg.media_zip_password_title"),
+            TranslationService.get("msg.media_zip_password_prompt"),
+            show="*",
+            parent=self,
+        )
+        if password is None:
+            return
+        if len(password) < 4:
+            return messagebox.showwarning(
+                TranslationService.get("msg.media_zip_password_title"),
+                TranslationService.get("msg.media_zip_password_short")
+            )
+
+        confirmation = simpledialog.askstring(
+            TranslationService.get("msg.media_zip_password_title"),
+            TranslationService.get("msg.media_zip_password_confirm"),
+            show="*",
+            parent=self,
+        )
+        if confirmation is None:
+            return
+        if confirmation != password:
+            return messagebox.showwarning(
+                TranslationService.get("msg.media_zip_password_title"),
+                TranslationService.get("msg.media_zip_password_mismatch")
+            )
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".zip",
+            filetypes=[("ZIP", "*.zip")]
+        )
+        if not path:
+            return
+
+        try:
+            count = self.export_service.export_media_archive(
+                self._current_editor_note_for_export(),
+                path,
+                password,
+            )
+            messagebox.showinfo(
+                TranslationService.get("msg.export_success"),
+                TranslationService.get("msg.media_zip_success", count=count, path=path)
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                TranslationService.get("msg.media_zip_error"),
+                str(exc)
+            )
+
+    def open_media_zip(self):
+        path = filedialog.askopenfilename(
+            title=TranslationService.get("msg.media_zip_open_title"),
+            filetypes=[("ZIP", "*.zip"), ("All files", "*.*")]
+        )
+        if not path:
+            return
+
+        password = simpledialog.askstring(
+            TranslationService.get("msg.media_zip_password_title"),
+            TranslationService.get("msg.media_zip_open_password"),
+            show="*",
+            parent=self,
+        )
+        if password is None:
+            return
+
+        destination = filedialog.askdirectory(
+            title=TranslationService.get("msg.media_zip_destination")
+        )
+        if not destination:
+            return
+
+        try:
+            count = self.export_service.extract_media_archive(
+                path,
+                destination,
+                password,
+            )
+            messagebox.showinfo(
+                TranslationService.get("msg.export_success"),
+                TranslationService.get(
+                    "msg.media_zip_extract_success",
+                    count=count,
+                    path=destination,
+                )
+            )
+        except RuntimeError as exc:
+            detail = str(exc)
+            lowered = detail.casefold()
+            if "password" in lowered or "bad crc" in lowered:
+                detail = TranslationService.get("msg.media_zip_wrong_password")
+            messagebox.showerror(
+                TranslationService.get("msg.media_zip_error"),
+                detail
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                TranslationService.get("msg.media_zip_error"),
+                str(exc)
+            )
 
     def on_close(self):
         from tkinter import messagebox
@@ -637,50 +752,66 @@ class MainWindow(ctk.CTk):
         else:  
             pass
 
-    def quit_app_completely(self, icon=None, item=None):
-        import os
-        if hasattr(self, 'tray_icon') and self.tray_icon is not None:
-            try:
-                self.tray_icon.stop()
-            except Exception:
-                pass
-        try:
-            self.quit()
-            self.destroy()
-        except Exception:
-            pass
-        os._exit(0)
-
     def _minimize_to_tray(self):
+        import pystray
+        from PIL import Image
+        import threading
+        self.withdraw()
         try:
-            self.withdraw()  
-            import pystray
-            from PIL import Image
-            import threading
-            try:
-                image = Image.open("icon.png")
-            except Exception:
-                image = Image.new('RGB', (64, 64), color=(0, 0, 0))
-            menu = pystray.Menu(
-                pystray.MenuItem("Mở Engraver", self.show_window_from_tray),
-                pystray.MenuItem("Thoát hoàn toàn", self.quit_app_completely)
-            )
-            self.tray_icon = pystray.Icon("Engraver", image, "Engraver Note App", menu)
-            threading.Thread(target=self.tray_icon.run, daemon=True).start()
-            
-        except Exception as e:
-            from tkinter import messagebox
-            self.deiconify() 
-            messagebox.showerror("Lỗi chạy ngầm", f"Không thể thu nhỏ ứng dụng:\n{str(e)}")
+            image = Image.open("icon.png")
+        except Exception:
+            image = Image.new('RGB', (64, 64), color=(0, 0, 0))
+        menu = pystray.Menu(
+            pystray.MenuItem("Mở Engraver", self.show_window_from_tray),
+            pystray.MenuItem("Thoát hoàn toàn", self.quit_app_completely)
+        )
+        self.tray_icon = pystray.Icon("Engraver", image, "Engraver Note App", menu)
+        threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def show_window_from_tray(self, icon=None, item=None):
-        try:
-            if hasattr(self, 'tray_icon') and self.tray_icon is not None:
-                self.tray_icon.stop()
-        except Exception:
-            pass
-        self.after(0, self.deiconify)
-        
+        """Restore the Tk window from a pystray callback."""
+        tray_icon = icon or getattr(self, "tray_icon", None)
+        if tray_icon is not None:
+            try:
+                tray_icon.stop()
+            except Exception:
+                pass
+
+        def restore_window():
+            self.tray_icon = None
+            self.deiconify()
+            self.state("normal")
+            self.lift()
+            self.focus_force()
+
+        # pystray invokes menu callbacks on its own worker thread. All Tk calls
+        # must be marshalled back to the UI thread.
+        self.after(0, restore_window)
+
+    def quit_app_completely(self, icon=None, item=None):
+        """Stop background services and close the application completely."""
+        import threading
+
+        tray_icon = icon or getattr(self, "tray_icon", None)
+        if tray_icon is not None:
+            try:
+                tray_icon.stop()
+            except Exception:
+                pass
+
+        def shutdown():
+            self.tray_icon = None
+            reminder_service = getattr(self, "reminder_service", None)
+            if reminder_service is not None:
+                reminder_service.stop()
+            self.quit()
+            self.destroy()
+
+        if threading.current_thread() is threading.main_thread():
+            shutdown()
+        else:
+            self.after(0, shutdown)
+
     def import_from_file(self):
         """Mở file txt, md, docx hoặc pdf, bóc toàn bộ văn bản và ảnh đính kèm."""
         import os

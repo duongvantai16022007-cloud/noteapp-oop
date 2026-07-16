@@ -1,6 +1,19 @@
 import sqlite3
 import threading
 import os
+import sys
+
+
+def _default_db_path():
+    """Use persistent per-user storage when running from a one-file executable."""
+    if getattr(sys, "frozen", False):
+        app_dir = os.path.join(
+            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
+            "Engraver",
+        )
+        os.makedirs(app_dir, exist_ok=True)
+        return os.path.join(app_dir, "notes.db")
+    return "notes.db"
 
 class DatabaseManager:
 
@@ -13,7 +26,7 @@ class DatabaseManager:
         elif args and isinstance(args[0], str):
             db_path = args[0]
         else:
-            db_path = 'notes.db'
+            db_path = _default_db_path()
         db_path = os.path.abspath(db_path)
 
         inst = cls._instances.get(db_path)
@@ -23,7 +36,9 @@ class DatabaseManager:
         cls._instance = inst
         return inst
 
-    def __init__(self, db_path="notes.db"):
+    def __init__(self, db_path=None):
+        if db_path is None:
+            db_path = _default_db_path()
         if getattr(self, '_initialized', False):
             if not hasattr(self, '_lock'):
                 self._lock = threading.RLock()
