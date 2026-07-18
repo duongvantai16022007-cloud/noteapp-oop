@@ -20,6 +20,8 @@ class SidebarFrame(ctk.CTkFrame):
         self.on_note_select = on_note_select
         self.on_restore_deleted = on_restore_deleted
         self.on_permanently_delete = on_permanently_delete
+        self._tree_render_generation = 0
+        self._deleted_render_generation = 0
         initial_settings = initial_settings or {}
 
         _ = TranslationService.get
@@ -96,12 +98,39 @@ class SidebarFrame(ctk.CTkFrame):
         )
         self.deleted_scroll_list.grid(row=5, column=0, padx=16, pady=(0, 20), sticky="nsew")
 
+    def apply_theme(self, previous_palette):
+        """Update sidebar colors without rebuilding its note widgets."""
+        ThemeManager.apply_to_widget_tree(self, previous_palette)
+
+    def _render_in_batches(self, tasks, generation_attr, batch_size=40):
+        """Render large lists incrementally to keep Tk's event loop responsive."""
+        generation = getattr(self, generation_attr, 0) + 1
+        setattr(self, generation_attr, generation)
+
+        def render_next(start=0):
+            try:
+                is_stale = generation != getattr(self, generation_attr, 0)
+                is_destroyed = not self.winfo_exists()
+            except Exception:
+                return
+            if is_stale or is_destroyed:
+                return
+            end = min(start + batch_size, len(tasks))
+            for task in tasks[start:end]:
+                task()
+            if end < len(tasks):
+                self.after_idle(lambda next_start=end: render_next(next_start))
+
+        render_next()
+
     def update_tree_list(self, folders, notes_by_folder):
         """Redraws the folder tree with solid nested list backing structures."""
+        self._tree_render_generation += 1
         for widget in self.scroll_list.winfo_children():
             widget.destroy()
             
         _ = TranslationService.get
+        note_tasks = []
 
         for folder in folders:
             f_id = folder["id"]
@@ -158,7 +187,9 @@ class SidebarFrame(ctk.CTkFrame):
             sub_notes_frame.pack(fill="x", padx=(14, 0)) 
             
             for note in notes_by_folder.get(f_id, []):
-                self._draw_single_note(sub_notes_frame, note)
+                note_tasks.append(
+                    lambda parent=sub_notes_frame, item=note: self._draw_single_note(parent, item)
+                )
 
         if folders and notes_by_folder.get("root"):
             lbl_divider = ctk.CTkLabel(
@@ -169,13 +200,20 @@ class SidebarFrame(ctk.CTkFrame):
             lbl_divider.pack(pady=(12, 4))
 
         for note in notes_by_folder.get("root", []):
-            self._draw_single_note(self.scroll_list, note)
+            note_tasks.append(
+                lambda parent=self.scroll_list, item=note: self._draw_single_note(parent, item)
+            )
+        self._render_in_batches(note_tasks, "_tree_render_generation")
 
     def update_list(self, notes_list):
+        self._tree_render_generation += 1
         for widget in self.scroll_list.winfo_children():
             widget.destroy()
-        for note in notes_list:
-            self._draw_single_note(self.scroll_list, note)
+        tasks = [
+            lambda parent=self.scroll_list, item=note: self._draw_single_note(parent, item)
+            for note in notes_list
+        ]
+        self._render_in_batches(tasks, "_tree_render_generation")
 
     def _draw_single_note(self, parent_frame, note):
         _ = TranslationService.get
@@ -202,6 +240,7 @@ class SidebarFrame(ctk.CTkFrame):
         btn.pack(fill="x", pady=1, padx=4)
 
     def update_deleted_list(self, deleted_notes):
+        self._deleted_render_generation += 1
         for widget in self.deleted_scroll_list.winfo_children():
             widget.destroy()
             
@@ -216,45 +255,52 @@ class SidebarFrame(ctk.CTkFrame):
             lbl_empty.pack(padx=10, pady=15)
             return
 
-        for note in deleted_notes:
-            title = note.get('title', _('sidebar.no_title'))
-            deleted_at = note.get('deleted_at', '')
-            icon = "◼" if str(note.get('type', '')).lower() == 'checklist' else "📄"
-            
-            label_text = f"{icon} {title}"
-            if deleted_at:
-                label_text += f"  ({deleted_at[:10]})"
+        tasks = [
+            lambda item=note: self._draw_deleted_note(item)
+            for note in deleted_notes
+        ]
+        self._render_in_batches(tasks, "_deleted_render_generation")
 
-            row_frame = ctk.CTkFrame(self.deleted_scroll_list, fg_color="transparent")
-            row_frame.pack(fill="x", pady=1, padx=4)
+    def _draw_deleted_note(self, note):
+        _ = TranslationService.get
+        title = note.get('title', _('sidebar.no_title'))
+        deleted_at = note.get('deleted_at', '')
+        icon = "◼" if str(note.get('type', '')).lower() == 'checklist' else "📄"
 
-            btn = ctk.CTkButton(
-                row_frame,
-                text=f"↺  {label_text}",
-                font=ctk.CTkFont(size=12),
-                fg_color="transparent",
-                hover_color=ThemeManager.get("cell_bg_muted"),
-                text_color=ThemeManager.get("text_primary"),
-                anchor="w",
-                corner_radius=4,
-                height=28,
-                command=lambda id=note['id']: self.on_restore_deleted(id)
-            )
-            btn.pack(side="left", fill="x", expand=True)
+        label_text = f"{icon} {title}"
+        if deleted_at:
+            label_text += f"  ({deleted_at[:10]})"
 
-            del_btn = ctk.CTkButton(
-                row_frame,
-                text="✕",
-                width=24,
-                height=28,
-                font=ctk.CTkFont(size=10),
-                fg_color="transparent",
-                hover_color=ThemeManager.get("accent_danger_hover"),
-                text_color=ThemeManager.get("accent_danger"),
-                corner_radius=4,
-                command=lambda id=note['id']: self.on_permanently_delete(id)
-            )
-            del_btn.pack(side="right", padx=(4, 0))
+        row_frame = ctk.CTkFrame(self.deleted_scroll_list, fg_color="transparent")
+        row_frame.pack(fill="x", pady=1, padx=4)
+
+        btn = ctk.CTkButton(
+            row_frame,
+            text=f"↺  {label_text}",
+            font=ctk.CTkFont(size=12),
+            fg_color="transparent",
+            hover_color=ThemeManager.get("cell_bg_muted"),
+            text_color=ThemeManager.get("text_primary"),
+            anchor="w",
+            corner_radius=4,
+            height=28,
+            command=lambda id=note['id']: self.on_restore_deleted(id)
+        )
+        btn.pack(side="left", fill="x", expand=True)
+
+        del_btn = ctk.CTkButton(
+            row_frame,
+            text="✕",
+            width=24,
+            height=28,
+            font=ctk.CTkFont(size=10),
+            fg_color="transparent",
+            hover_color=ThemeManager.get("accent_danger_hover"),
+            text_color=ThemeManager.get("accent_danger"),
+            corner_radius=4,
+            command=lambda id=note['id']: self.on_permanently_delete(id)
+        )
+        del_btn.pack(side="right", padx=(4, 0))
 
     def _on_new_folder_click(self):
         from tkinter import simpledialog, messagebox

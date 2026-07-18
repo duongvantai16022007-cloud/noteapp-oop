@@ -31,6 +31,11 @@ class MainWindow(ctk.CTk):
         self.current_note = None
         self.calendar_month = datetime.date.today().replace(day=1)
         self._ui_built = False
+        self._last_deleted_purge_date = None
+        self._resize_tracking_ready = False
+        self._resize_layout_active = False
+        self._resize_finish_after_id = None
+        self._last_window_size = None
 
         self.title("ENGRAVER")
         self.geometry("1200x760")
@@ -52,17 +57,55 @@ class MainWindow(ctk.CTk):
         self.configure(fg_color=ThemeManager.get("grid_bg"))
 
         self._build_ui()
+        self.bind("<Configure>", self._on_window_configure, add="+")
+        self.after_idle(self._enable_resize_tracking)
 
         # Reminder chạy nền, callback đưa thông báo về main thread bằng self.after.
         self.reminder_service = ReminderService(self.repo, callback=self.handle_reminder_due, interval=10)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
-        self.refresh_sidebar()
-        self.prepare_new("Text")
-
     # =========================
     # Helpers
     # =========================
+    def _enable_resize_tracking(self):
+        if not self.winfo_exists():
+            return
+        self._last_window_size = (self.winfo_width(), self.winfo_height())
+        self._resize_tracking_ready = True
+
+    def _on_window_configure(self, event):
+        """Coalesce the event storm generated while the window is resized."""
+        if event.widget is not self or not self._resize_tracking_ready:
+            return
+
+        size = (event.width, event.height)
+        if size == self._last_window_size:
+            return
+        self._last_window_size = size
+
+        if not self._resize_layout_active:
+            self._begin_live_resize()
+
+        if self._resize_finish_after_id is not None:
+            self.after_cancel(self._resize_finish_after_id)
+        self._resize_finish_after_id = self.after(100, self._finish_live_resize)
+
+    def _begin_live_resize(self):
+        """Temporarily decouple heavy child layouts from every pixel change."""
+        if not all(hasattr(self, name) for name in ("sidebar", "editor")):
+            return
+        self._resize_layout_active = True
+        self.sidebar.grid_remove()
+        self.editor.grid_remove()
+
+    def _finish_live_resize(self):
+        self._resize_finish_after_id = None
+        if not self._resize_layout_active:
+            return
+        self._resize_layout_active = False
+        self.sidebar.grid()
+        self.editor.grid()
+
     def _build_ui(self, restore_note_id=None):
         if getattr(self, "sidebar", None):
             self.sidebar.destroy()
@@ -187,7 +230,10 @@ class MainWindow(ctk.CTk):
             pass
 
     def refresh_sidebar(self):
-        self.repo.purge_expired_deleted_notes(days=30)
+        today = datetime.date.today()
+        if self._last_deleted_purge_date != today:
+            self.repo.purge_expired_deleted_notes(days=30)
+            self._last_deleted_purge_date = today
         folders = getattr(self.repo, 'get_all_folders', lambda: [])() 
         all_notes = self.repo.get_all_notes()
         notes_by_folder = {"root": []}
@@ -560,35 +606,35 @@ class MainWindow(ctk.CTk):
     # =========================
     # Theme
     # =========================
+    def apply_theme(self, previous_palette):
+        """Recolor existing UI while preserving editor and sidebar state."""
+        self.configure(fg_color=ThemeManager.get("grid_bg"))
+        self.sidebar.apply_theme(previous_palette)
+        self.editor.apply_theme(previous_palette)
+        for child in self.winfo_children():
+            if child not in (self.sidebar, self.editor):
+                ThemeManager.apply_to_widget_tree(child, previous_palette)
+
     def handle_theme_change(self, key, value):
-        try:
-            self.wm_attributes("-alpha", 0)
-        except Exception:
-            pass
+        if self.settings.get(key) == value:
+            return
 
         self.settings_service.set_setting(key, value)
         self.settings[key] = value
 
-        restore_note_id = self.current_note.id if self.current_note else None
-
         if key == "appearance_mode":
             ctk.set_appearance_mode(value)
+            # CustomTkinter redraws tuple colors automatically; native Text tags
+            # need a small explicit refresh for their resolved light/dark color.
+            self.editor.apply_theme()
         elif key == "color_theme":
+            previous_palette = ThemeManager.get_palette()
             try:
                 ctk.set_default_color_theme(value.lower().replace(" ", "-"))
             except Exception:
                 ctk.set_default_color_theme("blue")
-            from services.theme_service import ThemeManager
             ThemeManager.set_active_theme(value)
-            self.configure(fg_color=ThemeManager.get("grid_bg"))
-
-        self._build_ui(restore_note_id=restore_note_id)
-
-        self.update_idletasks()
-        try:
-            self.wm_attributes("-alpha", 1)
-        except Exception:
-            pass
+            self.apply_theme(previous_palette)
 
     # =========================
     # Export

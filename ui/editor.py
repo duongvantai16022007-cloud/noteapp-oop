@@ -2,6 +2,7 @@ import re
 import tkinter as tk
 import tkinter.font as tkfont
 import uuid
+from collections import OrderedDict
 from urllib.parse import quote, unquote
 
 import customtkinter as ctk
@@ -15,6 +16,9 @@ from services.theme_service import ThemeManager
 from services.translation_service import TranslationService
 
 class EditorFrame(ctk.CTkFrame):
+    _thumbnail_cache = OrderedDict()
+    _thumbnail_cache_limit = 32
+
     def __init__(
         self,
         master
@@ -29,7 +33,11 @@ class EditorFrame(ctk.CTkFrame):
         self.checklist_vars = []
         self._editor_default_height = 420
         self._font_cache = {}
+        self._font_base_sizes = {}
         self._font_cache_initialized = set()
+        self._zoom_after_id = None
+        self._zoom_restore_after_id = None
+        self._pending_zoom_value = 100.0
         self.default_font_family = self._customtkinter_default_font_family()
         self.available_font_families = self._available_font_families()
         self.zoom_factor = 1.0
@@ -189,7 +197,7 @@ class EditorFrame(ctk.CTkFrame):
         self.document_zoom_slider.set(100)
         self.document_zoom_slider.grid(row=0, column=7, padx=(0, 8), sticky="w")
         self.document_zoom_slider.bind("<ButtonRelease-1>", self.on_zoom_release)
-        self.document_zoom_slider.configure(command=lambda value: self.on_zoom_release(None))
+        self.document_zoom_slider.configure(command=self._queue_zoom)
 
         # --- Primary Title Header ---
         self.entry_title = ctk.CTkEntry(
@@ -274,6 +282,73 @@ class EditorFrame(ctk.CTkFrame):
         ).pack(side="right")
         self.new_item_entry.bind("<Return>", lambda event: self._add_checklist_item_from_enter(event))
 
+    @staticmethod
+    def _tk_theme_color(key):
+        value = ThemeManager.get(key)
+        if isinstance(value, (list, tuple)):
+            return value[1] if ctk.get_appearance_mode() == "Dark" else value[0]
+        return value
+
+    def _configure_search_tags(self):
+        widget = self._text_widget()
+        widget.tag_configure(
+            "content_search_match",
+            background=self._tk_theme_color("search_match_bg"),
+            foreground=self._tk_theme_color("search_match_fg")
+        )
+        widget.tag_configure(
+            "content_search_current",
+            background=self._tk_theme_color("search_current_bg"),
+            foreground=self._tk_theme_color("search_current_fg")
+        )
+        widget.tag_raise("content_search_match")
+        widget.tag_raise("content_search_current")
+
+    def apply_theme(self, previous_palette=None):
+        """Apply palette changes without replacing editor state or media."""
+        if previous_palette:
+            ThemeManager.apply_to_widget_tree(self, previous_palette)
+
+        widget = self._text_widget()
+        widget.tag_configure("sel", background=ThemeManager.get("selection_bg"))
+        self._configure_search_tags()
+
+        for item in self.checklist_vars:
+            item["search_default_text_color"] = ThemeManager.get("text_primary")
+            item["search_default_border_color"] = ThemeManager.get("grid_border")
+
+        keyword = self.content_search_entry.get().strip()
+        if keyword:
+            selected_index = self._content_search_index
+            self.search_current_note()
+            if self._content_search_matches and selected_index >= 0:
+                self._content_search_index = min(selected_index, len(self._content_search_matches) - 1)
+                self._activate_content_search_match()
+
+    @classmethod
+    def _cached_thumbnail(cls, path, size=(420, 260)):
+        """Decode each unchanged image once and retain a small LRU cache."""
+        stat = path.stat()
+        resolved_path = str(path.resolve())
+        key = (resolved_path, stat.st_mtime_ns, stat.st_size, tuple(size))
+        cached = cls._thumbnail_cache.get(key)
+        if cached is not None:
+            cls._thumbnail_cache.move_to_end(key)
+            return cached
+
+        with Image.open(path) as source_image:
+            preview = source_image.convert("RGBA")
+            preview.thumbnail(size)
+
+        for stale_key in list(cls._thumbnail_cache):
+            if stale_key[0] == resolved_path and stale_key != key:
+                del cls._thumbnail_cache[stale_key]
+        cls._thumbnail_cache[key] = preview
+        cls._thumbnail_cache.move_to_end(key)
+        while len(cls._thumbnail_cache) > cls._thumbnail_cache_limit:
+            cls._thumbnail_cache.popitem(last=False)
+        return preview
+
     def _customtkinter_default_font_family(self):
         """Read CustomTkinter's platform default instead of hardcoding Arial."""
         font = ctk.CTkFont()
@@ -320,24 +395,7 @@ class EditorFrame(ctk.CTkFrame):
         widget.bind("<KeyRelease>", self._on_cursor_moved)
         widget.bind("<ButtonRelease-1>", self._on_cursor_moved)
 
-        def get_tk_color(key):
-            val = ThemeManager.get(key)
-            if isinstance(val, (list, tuple)):
-                return val[1] if ctk.get_appearance_mode() == "Dark" else val[0]
-            return val
-
-        widget.tag_configure(
-            "content_search_match",
-            background=get_tk_color("search_match_bg"),
-            foreground=get_tk_color("search_match_fg")
-        )
-        widget.tag_configure(
-            "content_search_current",
-            background=get_tk_color("search_current_bg"),
-            foreground=get_tk_color("search_current_fg")
-        )
-        widget.tag_raise("content_search_match")
-        widget.tag_raise("content_search_current")
+        self._configure_search_tags()
 
     @staticmethod
     def _find_content_occurrences(content, keyword):
@@ -430,16 +488,10 @@ class EditorFrame(ctk.CTkFrame):
                     text_color=ThemeManager.get("accent_primary"),
                     border_color=ThemeManager.get("accent_primary")
                 )
-            def get_tk_color(key):
-                val = ThemeManager.get(key)
-                if isinstance(val, (list, tuple)):
-                    return val[1] if ctk.get_appearance_mode() == "Dark" else val[0]
-                return val
-
             current = self._content_search_matches[self._content_search_index]
             current["checkbox"].configure(
-                text_color=get_tk_color("search_current_fg"),
-                border_color=get_tk_color("search_current_bg")
+                text_color=self._tk_theme_color("search_current_fg"),
+                border_color=self._tk_theme_color("search_current_bg")
             )
             return
 
@@ -545,7 +597,8 @@ class EditorFrame(ctk.CTkFrame):
             font = self._font_cache.get(tag_name)
             if font:
                 new_size = int(normalized["size"] * zoom_mult)
-                font.configure(size=new_size)
+                if int(font.cget("size")) != new_size:
+                    font.configure(size=new_size)
             return
 
         font = tkfont.Font(
@@ -561,6 +614,7 @@ class EditorFrame(ctk.CTkFrame):
         if normalized["highlight"]:
             kwargs["background"] = normalized["highlight"]
         self._font_cache[tag_name] = font
+        self._font_base_sizes[tag_name] = normalized["size"]
         self._font_cache_initialized.add(tag_name)
         widget.tag_configure(tag_name, **kwargs)
 
@@ -711,26 +765,61 @@ class EditorFrame(ctk.CTkFrame):
         self._text_widget().tag_remove("sel", "1.0", "end")
         self._text_widget().focus_set()
 
-    def on_zoom_release(self, event):
-        value = self.document_zoom_slider.get()
-        self.zoom_factor = float(value) / 100.0
+    def _queue_zoom(self, value):
+        """Keep slider dragging cheap and commit wheel/click zoom after idle."""
+        self._pending_zoom_value = float(value)
+        if self._zoom_after_id is not None:
+            self.after_cancel(self._zoom_after_id)
+        self._zoom_after_id = self.after(120, self._commit_pending_zoom)
+
+    def on_zoom_release(self, event=None):
+        self._pending_zoom_value = float(self.document_zoom_slider.get())
+        self._commit_pending_zoom()
+
+    def _commit_pending_zoom(self):
+        if self._zoom_after_id is not None:
+            self.after_cancel(self._zoom_after_id)
+            self._zoom_after_id = None
+        self._apply_zoom(self._pending_zoom_value)
+
+    @staticmethod
+    def _scaled_font_size(base_size, zoom_factor):
+        return max(1, int(base_size * zoom_factor))
+
+    def _apply_zoom(self, value):
+        zoom_factor = max(0.5, min(2.0, float(value) / 100.0))
+        if abs(zoom_factor - self.zoom_factor) < 0.0001:
+            return
+
         widget = self._text_widget()
         cursor_pos = widget.index("insert")
         yview = widget.yview()
+        self.zoom_factor = zoom_factor
 
-        new_base_size = int(self._base_style["size"] * self.zoom_factor)
-        self._text_font.configure(size=new_base_size)
+        new_base_size = self._scaled_font_size(self._base_style["size"], zoom_factor)
+        if int(self._text_font.cget("size")) != new_base_size:
+            self._text_font.configure(size=new_base_size)
 
         for tag_name, font in list(self._font_cache.items()):
-            style = self._style_from_tag_name(tag_name)
-            if style:
-                new_size = int(style["size"] * self.zoom_factor)
+            base_size = self._font_base_sizes.get(tag_name)
+            if base_size is not None:
+                new_size = self._scaled_font_size(base_size, zoom_factor)
+                if int(font.cget("size")) == new_size:
+                    continue
                 font.configure(size=new_size)
 
-        self.update_idletasks()
+        if self._zoom_restore_after_id is not None:
+            self.after_cancel(self._zoom_restore_after_id)
+        self._zoom_restore_after_id = self.after_idle(
+            lambda: self._restore_view_after_zoom(cursor_pos, yview[0])
+        )
+
+    def _restore_view_after_zoom(self, cursor_pos, yview_fraction):
+        self._zoom_restore_after_id = None
         try:
+            widget = self._text_widget()
             widget.mark_set("insert", cursor_pos)
-            widget.yview_moveto(yview[0])
+            widget.yview_moveto(yview_fraction)
             widget.see("insert")
         except Exception:
             pass
@@ -756,6 +845,7 @@ class EditorFrame(ctk.CTkFrame):
             except Exception:
                 pass
         self._font_cache.clear()
+        self._font_base_sizes.clear()
         self._font_cache_initialized.clear()
 
     @staticmethod
@@ -863,9 +953,7 @@ class EditorFrame(ctk.CTkFrame):
 
         if kind == "image" and path.is_file():
             try:
-                with Image.open(path) as source_image:
-                    preview = source_image.convert("RGBA")
-                    preview.thumbnail((420, 260))
+                preview = self._cached_thumbnail(path)
                 ctk_image = ctk.CTkImage(
                     light_image=preview,
                     dark_image=preview,
