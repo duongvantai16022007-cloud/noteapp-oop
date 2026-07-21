@@ -35,7 +35,6 @@ class EditorFrame(ctk.CTkFrame):
         self._font_cache = {}
         self._font_base_sizes = {}
         self._font_cache_initialized = set()
-        self._zoom_after_id = None
         self._zoom_restore_after_id = None
         self._pending_zoom_value = 100.0
         self.default_font_family = self._customtkinter_default_font_family()
@@ -44,6 +43,7 @@ class EditorFrame(ctk.CTkFrame):
         self._content_search_matches = []
         self._content_search_index = -1
         self.media_service = MediaService()
+        self.current_note_id = None
         self._media_attachments = []
         self._media_widgets = {}
         self._media_image_refs = {}
@@ -197,6 +197,7 @@ class EditorFrame(ctk.CTkFrame):
         self.document_zoom_slider.set(100)
         self.document_zoom_slider.grid(row=0, column=7, padx=(0, 8), sticky="w")
         self.document_zoom_slider.bind("<ButtonRelease-1>", self.on_zoom_release)
+        self.document_zoom_slider.configure(command=self._queue_zoom)
 
         # --- Primary Title Header ---
         self.entry_title = ctk.CTkEntry(
@@ -587,49 +588,42 @@ class EditorFrame(ctk.CTkFrame):
             "highlight": "" if highlight == "none" else unquote(highlight),
         }
 
+    @staticmethod
+    def _font_signature(style):
+        """Return only properties that affect glyph metrics and font drawing."""
+        return (
+            style["family"],
+            int(style["size"]),
+            bool(style["bold"]),
+            bool(style["italic"]),
+            bool(style["underline"]),
+        )
+
     def _ensure_style_tag(self, tag_name, style):
         widget = self._text_widget()
         normalized = self._normalize_style(style)
         zoom_mult = getattr(self, "zoom_factor", 1.0)
 
         if tag_name in self._font_cache_initialized:
-            font = self._font_cache.get(tag_name)
-            if font:
-                new_size = max(1, int(normalized["size"] * zoom_mult))
-                if int(font.cget("size")) != new_size:
-                    font.configure(size=new_size)
             return
 
-        font_key = (
-            normalized["family"],
-            normalized["size"],
-            normalized["bold"],
-            normalized["italic"],
-            normalized["underline"]
-        )
-
-        if not hasattr(self, "_shared_fonts"):
-            self._shared_fonts = {}
-
-        if font_key in self._shared_fonts:
-            font = self._shared_fonts[font_key]
-        else:
+        font_key = self._font_signature(normalized)
+        font = self._font_cache.get(font_key)
+        if font is None:
             font = tkfont.Font(
                 family=normalized["family"],
-                size=max(1, int(normalized["size"] * zoom_mult)),
+                size=self._scaled_font_size(normalized["size"], zoom_mult),
                 weight="bold" if normalized["bold"] else "normal",
                 slant="italic" if normalized["italic"] else "roman",
                 underline=normalized["underline"]
             )
-            self._shared_fonts[font_key] = font
+            self._font_cache[font_key] = font
+            self._font_base_sizes[font_key] = normalized["size"]
         kwargs = {"font": font}
         if normalized["foreground"]:
             kwargs["foreground"] = normalized["foreground"]
         if normalized["highlight"]:
             kwargs["background"] = normalized["highlight"]
-            
-        self._font_cache[tag_name] = font
-        self._font_base_sizes[tag_name] = normalized["size"]
         self._font_cache_initialized.add(tag_name)
         widget.tag_configure(tag_name, **kwargs)
 
@@ -781,20 +775,14 @@ class EditorFrame(ctk.CTkFrame):
         self._text_widget().focus_set()
 
     def _queue_zoom(self, value):
-        """Keep slider dragging cheap and commit wheel/click zoom after idle."""
+        """Record slider movement without relaying out the document mid-drag."""
         self._pending_zoom_value = float(value)
-        if self._zoom_after_id is not None:
-            self.after_cancel(self._zoom_after_id)
-        self._zoom_after_id = self.after(120, self._commit_pending_zoom)
 
     def on_zoom_release(self, event=None):
         self._pending_zoom_value = float(self.document_zoom_slider.get())
         self._commit_pending_zoom()
 
     def _commit_pending_zoom(self):
-        if self._zoom_after_id is not None:
-            self.after_cancel(self._zoom_after_id)
-            self._zoom_after_id = None
         self._apply_zoom(self._pending_zoom_value)
 
     @staticmethod
@@ -805,44 +793,44 @@ class EditorFrame(ctk.CTkFrame):
         zoom_factor = max(0.5, min(2.0, float(value) / 100.0))
         if abs(zoom_factor - self.zoom_factor) < 0.0001:
             return
-        widget = self._text_widget()
-        cursor_pos = widget.index("insert")
-        yview = widget.yview()
+
         self.zoom_factor = zoom_factor
-        self.textbox_content.grid_remove()
-        self.update_idletasks() 
+        font_updates = []
         new_base_size = self._scaled_font_size(self._base_style["size"], zoom_factor)
         if int(self._text_font.cget("size")) != new_base_size:
-            self._text_font.configure(size=new_base_size)
-        if hasattr(self, "_shared_fonts"):
-            for font_key, font in list(self._shared_fonts.items()):
-                base_size = font_key[1] 
-                new_size = self._scaled_font_size(base_size, zoom_factor)
-                if int(font.cget("size")) != new_size:
-                    font.configure(size=new_size)
-        else:
-            for tag_name, font in list(self._font_cache.items()):
-                base_size = self._font_base_sizes.get(tag_name)
-                if base_size is not None:
-                    new_size = self._scaled_font_size(base_size, zoom_factor)
-                    if int(font.cget("size")) == new_size:
-                        continue
-                    font.configure(size=new_size)
-        self.textbox_content.grid(row=0, column=0, sticky="nsew")
+            font_updates.append((self._text_font, new_base_size))
 
+        for font_key, font in list(self._font_cache.items()):
+            base_size = self._font_base_sizes.get(font_key)
+            if base_size is not None:
+                new_size = self._scaled_font_size(base_size, zoom_factor)
+                if int(font.cget("size")) == new_size:
+                    continue
+                font_updates.append((font, new_size))
+
+        # Adjacent slider steps can resolve to the same integer Tk font sizes.
+        # Avoid forcing a full text-layout pass when nothing visible changes.
+        if not font_updates:
+            return
+
+        widget = self._text_widget()
+        yview_fraction = widget.yview()[0]
+        for font, new_size in font_updates:
+            font.configure(size=new_size)
+
+        self._schedule_zoom_view_restore(yview_fraction)
+
+    def _schedule_zoom_view_restore(self, yview_fraction):
         if self._zoom_restore_after_id is not None:
             self.after_cancel(self._zoom_restore_after_id)
         self._zoom_restore_after_id = self.after_idle(
-            lambda: self._restore_view_after_zoom(cursor_pos, yview[0])
+            lambda: self._restore_view_after_zoom(yview_fraction)
         )
 
-    def _restore_view_after_zoom(self, cursor_pos, yview_fraction):
+    def _restore_view_after_zoom(self, yview_fraction):
         self._zoom_restore_after_id = None
         try:
-            widget = self._text_widget()
-            widget.mark_set("insert", cursor_pos)
-            widget.yview_moveto(yview_fraction)
-            widget.see("insert")
+            self._text_widget().yview_moveto(yview_fraction)
         except Exception:
             pass
 
@@ -861,19 +849,11 @@ class EditorFrame(ctk.CTkFrame):
         self._apply_style_tag_to_range(start, end, style)
 
     def _clear_font_cache(self):
-        if hasattr(self, "_shared_fonts"):
-            for font in self._shared_fonts.values():
-                try:
-                    font.destroy()
-                except Exception:
-                    pass
-            self._shared_fonts.clear()
-        else:
-            for font in self._font_cache.values():
-                try:
-                    font.destroy()
-                except Exception:
-                    pass 
+        for font in self._font_cache.values():
+            try:
+                font.destroy()
+            except Exception:
+                pass
         self._font_cache.clear()
         self._font_base_sizes.clear()
         self._font_cache_initialized.clear()
@@ -902,7 +882,7 @@ class EditorFrame(ctk.CTkFrame):
         errors = []
         for path in paths:
             try:
-                attachment = self.media_service.import_file(path)
+                attachment = self.media_service.import_file(path, note_id=self.current_note_id)
                 attachment["position"] = len(widget.get("1.0", insert_index))
                 self._media_attachments.append(attachment)
                 media_widget = self._create_inline_media_widget(attachment, insert_index)
@@ -1091,6 +1071,21 @@ class EditorFrame(ctk.CTkFrame):
         serialized.sort(key=lambda item: int(item.get("position", 0)))
         self._media_attachments = serialized
         return [dict(item) for item in serialized]
+
+    def organize_media(self, note_id, content):
+        organized = self.media_service.organize_content_media(note_id, content)
+        self.current_note_id = str(note_id)
+        if isinstance(organized, dict):
+            by_id = {
+                str(item.get("id")): item
+                for item in organized.get("media", [])
+                if isinstance(item, dict)
+            }
+            self._media_attachments = [
+                dict(by_id.get(str(item.get("id")), item))
+                for item in self._media_attachments
+            ]
+        return organized
 
     def _current_media_positions(self):
         widget = self._text_widget()
@@ -1333,7 +1328,17 @@ class EditorFrame(ctk.CTkFrame):
         self.current_note = None
         self.set_data("", "", note_type, reminder_at=None, deadline_at=None, is_locked=False)
 
-    def set_data(self, title, content_data, note_type, reminder_at=None, deadline_at=None, is_locked=False):
+    def set_data(
+        self,
+        title,
+        content_data,
+        note_type,
+        reminder_at=None,
+        deadline_at=None,
+        is_locked=False,
+        note_id=None,
+    ):
+        self.current_note_id = str(note_id) if note_id else None
         self.clear_content_search()
         self.setup_ui_mode(note_type)
         self.entry_title.delete(0, 'end')

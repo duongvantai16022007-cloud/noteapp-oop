@@ -2,18 +2,23 @@ import sqlite3
 import threading
 import os
 import sys
+from pathlib import Path
 
 
 def _default_db_path():
-    """Use persistent per-user storage when running from a one-file executable."""
+    """Return an absolute database path independent from the process CWD."""
     if getattr(sys, "frozen", False):
-        app_dir = os.path.join(
-            os.environ.get("LOCALAPPDATA", os.path.expanduser("~")),
-            "Engraver",
-        )
-        os.makedirs(app_dir, exist_ok=True)
-        return os.path.join(app_dir, "notes.db")
-    return "notes.db"
+        if sys.platform == "win32":
+            app_dir = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Engraver"
+        elif sys.platform == "darwin":
+            app_dir = Path.home() / "Library" / "Application Support" / "Engraver"
+        else:
+            app_dir = Path.home() / ".engraver"
+    else:
+        app_dir = Path(__file__).resolve().parent.parent
+    app_dir = app_dir.expanduser().resolve()
+    app_dir.mkdir(parents=True, exist_ok=True)
+    return str((app_dir / "notes.db").resolve())
 
 class DatabaseManager:
 
@@ -54,6 +59,7 @@ class DatabaseManager:
             if recreate:
                 self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
                 self.connection.row_factory = sqlite3.Row
+                self.connection.execute("PRAGMA foreign_keys = ON")
                 with self._lock:
                     self._create_tables()
 
@@ -63,6 +69,7 @@ class DatabaseManager:
         self._lock = threading.RLock()
         self.connection = sqlite3.connect(self.db_path, check_same_thread=False)
         self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA foreign_keys = ON")
         with self._lock:
             self._create_tables()
 
@@ -89,6 +96,22 @@ class DatabaseManager:
             )
         ''')
 
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS folders (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                parent_id TEXT DEFAULT NULL
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+
         # Các cột bổ sung cho bảo mật, reminder/deadline.
         self._add_column_if_not_exists("notes", "is_locked", "INTEGER DEFAULT 0")
         self._add_column_if_not_exists("notes", "password_hash", "TEXT")
@@ -98,14 +121,10 @@ class DatabaseManager:
         self._add_column_if_not_exists("notes", "reminder_notified", "INTEGER DEFAULT 0")
         self._add_column_if_not_exists("notes", "deadline_notified", "INTEGER DEFAULT 0")
         self._add_column_if_not_exists("notes", "deleted_at", "TEXT")
+        self._add_column_if_not_exists("folders", "parent_id", "TEXT DEFAULT NULL")
 
-        # Lưu cấu hình UI như theme sáng/tối, màu chủ đạo.
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key TEXT PRIMARY KEY,
-                value TEXT
-            )
-        ''')
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_notes_folder_id ON notes(folder_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_folders_parent_id ON folders(parent_id)")
 
         self.connection.commit()
 
@@ -115,18 +134,7 @@ class DatabaseManager:
         existing_columns = [row[1] for row in cursor.fetchall()]
         if column_name not in existing_columns:
             cursor.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_def}")
-            
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS folders (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                created_at TEXT NOT NULL
-        )
-        ''')
-        cursor.execute("PRAGMA table_info(notes)")
-        columns = [row['name'] for row in cursor.fetchall()]
-        if 'folder_id' not in columns:
-            cursor.execute("ALTER TABLE notes ADD COLUMN folder_id TEXT")
+
     def execute_query(self, query, params=()):
         """
         Dùng khi muốn chỉnh sửa database.
@@ -137,6 +145,18 @@ class DatabaseManager:
             cursor.execute(query, params)
             self.connection.commit()
             return cursor
+
+    def execute_transaction(self, statements):
+        """Execute multiple statements atomically."""
+        with self._lock:
+            cursor = self.connection.cursor()
+            try:
+                for query, params in statements:
+                    cursor.execute(query, params)
+                self.connection.commit()
+            except Exception:
+                self.connection.rollback()
+                raise
 
     def fetch_all(self, query, params=()):
         """

@@ -6,5 +6,6 @@ docx2txt>=0.8
 PyMuPDF>=1.23.0
 PyPDF2>=3.0.0
 cryptography>=42.0.0
-pyinstaller>=6.0.0
 pyzipper>=0.3.6
+pyinstaller>=6.0.0
+plyer>=2.1.0

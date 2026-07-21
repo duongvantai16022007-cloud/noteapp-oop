@@ -4,11 +4,30 @@ import uuid
 class Folder:
     """Lớp quản lý thư mục, áp dụng Composite Pattern để chứa Note và Folder con."""
 
-    def __init__(self, name):
+    def __init__(self, name, parent_id=None):
         self._id = str(uuid.uuid4())
         self._name = name
+        self._parent_id = parent_id
         self._items = []
         self._created_at = datetime.now()
+
+    @property
+    def parent_id(self):
+        return self._parent_id
+
+    @parent_id.setter
+    def parent_id(self, value):
+        if value == self._id:
+            raise ValueError("Thư mục không thể là cha của chính nó.")
+        self._parent_id = value
+
+    def to_dict(self):
+        return {
+            "id": self._id,
+            "name": self._name,
+            "parent_id": self._parent_id,
+            "created_at": self._created_at.isoformat(),
+        }
 
     @property
     def name(self):

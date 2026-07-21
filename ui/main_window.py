@@ -5,6 +5,9 @@ import datetime
 import calendar
 from types import SimpleNamespace
 import os
+import sys
+import uuid
+from pathlib import Path
 
 from data.NoteRepository import NoteRepository
 from model.note_factory import NoteFactory
@@ -29,6 +32,7 @@ class MainWindow(ctk.CTk):
         self.settings_service = SettingsService()
         self.settings = self.settings_service.get_all()
         self.current_note = None
+        self.pending_note_id = None
         self.calendar_month = datetime.date.today().replace(day=1)
         self._ui_built = False
         self._last_deleted_purge_date = None
@@ -37,7 +41,6 @@ class MainWindow(ctk.CTk):
         self._resize_finish_after_id = None
         self._last_window_size = None
 
-        self.title("ENGRAVER")
         self.geometry("1200x760")
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
@@ -47,6 +50,7 @@ class MainWindow(ctk.CTk):
         initial_color = self.settings.get("color_theme", "blue")
         initial_language = self.settings.get("language", "vi") 
         TranslationService.set_language(initial_language)
+        self.title(TranslationService.get("app.title"))
         ctk.set_appearance_mode(initial_appearance)
         try:
             ctk.set_default_color_theme(initial_color.lower().replace(" ", "-"))
@@ -155,10 +159,14 @@ class MainWindow(ctk.CTk):
         file_menu.add_command(label=_("menu.file.export_md"), command=self.export_md)
         file_menu.add_command(label=_("menu.file.export_pdf"), command=self.export_pdf)
         file_menu.add_command(label=_("menu.file.export_media_zip"), command=self.export_media_zip)
+        file_menu.add_command(
+            label=_("menu.file.export_media_zip_password"),
+            command=self.export_media_zip_with_password,
+        )
         file_menu.add_command(label=_("menu.file.open_media_zip"), command=self.open_media_zip)
         menubar.add_cascade(label=_("menu.file"), menu=file_menu)
         file_menu.add_separator()
-        file_menu.add_command(label="Nhập từ file (Import)...", command=self.import_from_file)
+        file_menu.add_command(label=_("menu.file.import"), command=self.import_from_file)
         
         # --- Edit Menu ---
         edit_menu = Menu(menubar, tearoff=0)
@@ -174,13 +182,18 @@ class MainWindow(ctk.CTk):
         # --- Options Menu ---
         options_menu = Menu(menubar, tearoff=0)
         options_menu.add_command(label=_("menu.options.lock"), command=self.toggle_note_lock)
-        options_menu.add_command(label="Di chuyển vào Thư mục...", command=self.move_current_note_to_folder)
+        options_menu.add_command(label=_("menu.options.move_folder"), command=self.move_current_note_to_folder)
         options_menu.add_separator()
         
         # Menu Giao diện
         appearance_menu = Menu(options_menu, tearoff=0)
-        for mode in ["System", "Light", "Dark"]:
-            appearance_menu.add_command(label=mode, command=lambda m=mode: self.handle_theme_change("appearance_mode", m))
+        appearance_modes = (
+            ("System", _("appearance.system")),
+            ("Light", _("appearance.light")),
+            ("Dark", _("appearance.dark")),
+        )
+        for mode, label in appearance_modes:
+            appearance_menu.add_command(label=label, command=lambda m=mode: self.handle_theme_change("appearance_mode", m))
         options_menu.add_cascade(label=_("menu.options.appearance"), menu=appearance_menu)
         
         # Menu Chủ đề màu
@@ -217,7 +230,7 @@ class MainWindow(ctk.CTk):
         TranslationService.set_language(lang_code)
 
         # Đổi lại tiêu đề app
-        self.title(TranslationService.get("app.title") + " - Full Features")
+        self.title(TranslationService.get("app.title"))
 
         # 3. Tái tạo lại toàn bộ UI với ngôn ngữ mới
         restore_note_id = self.current_note.id if self.current_note else None
@@ -232,7 +245,8 @@ class MainWindow(ctk.CTk):
     def refresh_sidebar(self):
         today = datetime.date.today()
         if self._last_deleted_purge_date != today:
-            self.repo.purge_expired_deleted_notes(days=30)
+            for note_id in self.repo.purge_expired_deleted_notes(days=30):
+                self.editor.media_service.delete_note_media(note_id)
             self._last_deleted_purge_date = today
         folders = getattr(self.repo, 'get_all_folders', lambda: [])() 
         all_notes = self.repo.get_all_notes()
@@ -265,7 +279,7 @@ class MainWindow(ctk.CTk):
         try:
             return datetime.datetime.fromisoformat(value).replace(microsecond=0).isoformat()
         except ValueError:
-            raise ValueError("Sai định dạng thời gian. Vui lòng dùng YYYY-MM-DD HH:MM, ví dụ 2026-07-01 20:30.")
+            raise ValueError(TranslationService.get("msg.time_format_error"))
 
     def _format_datetime_display(self, value):
         if not value:
@@ -308,19 +322,36 @@ class MainWindow(ctk.CTk):
     # =========================
     # CRUD Note
     # =========================
-    def prepare_new(self, note_type):
+    def _discard_pending_media(self, except_note_id=None):
+        pending_id = getattr(self, "pending_note_id", None)
+        if self.current_note is None and pending_id and pending_id != except_note_id:
+            self.editor.media_service.delete_note_media(pending_id)
+
+    def prepare_new(self, note_type, note_id=None):
+        draft_note_id = str(note_id or uuid.uuid4())
+        self._discard_pending_media(except_note_id=draft_note_id)
         self.current_note = None
         self.pending_folder_id = None
-        self.editor.set_data("", "", note_type, reminder_at=None, deadline_at=None, is_locked=False)
+        self.pending_note_id = draft_note_id
+        self.editor.set_data(
+            "", "", note_type,
+            reminder_at=None,
+            deadline_at=None,
+            is_locked=False,
+            note_id=draft_note_id,
+        )
 
-    def create_new_folder(self, folder_name):
+    def create_new_folder(self, folder_name, parent_id=None):
         """Hứng tên thư mục từ Sidebar, lưu xuống DB và refresh giao diện"""
         from tkinter import messagebox
         try:
-            self.repo.create_folder(folder_name)
+            self.repo.create_folder(folder_name, parent_id=parent_id)
             self.refresh_sidebar() 
         except Exception as e:
-            messagebox.showerror("Lỗi", f"Không thể tạo thư mục: {e}")
+            messagebox.showerror(
+                TranslationService.get("msg.save_error"),
+                TranslationService.get("msg.folder_create_error", error=e),
+            )
 
     def prepare_new_in_folder(self, folder_id, folder_name):
         from services.translation_service import TranslationService
@@ -362,13 +393,20 @@ class MainWindow(ctk.CTk):
         ).pack(side="right", expand=True, padx=10)
 
     def load_note(self, note_id):
+        self._discard_pending_media(except_note_id=note_id)
         self.pending_folder_id = None
+        self.pending_note_id = None
         note_data = self.repo.get_note(note_id)
         if not note_data:
             return
 
         if note_data.get("is_locked"):
-            password = simpledialog.askstring("Ghi chú đã khóa", "Nhập mật khẩu để mở ghi chú:", show="*", parent=self)
+            password = simpledialog.askstring(
+                TranslationService.get("msg.lock_title"),
+                TranslationService.get("msg.lock_prompt"),
+                show="*",
+                parent=self,
+            )
             if password is None:
                 return
             if not self.security_manager.verify_password(
@@ -376,10 +414,30 @@ class MainWindow(ctk.CTk):
                 note_data.get("password_hash"),
                 note_data.get("password_salt")
             ):
-                messagebox.showerror("Sai mật khẩu", "Không thể mở ghi chú vì mật khẩu không đúng.")
+                messagebox.showerror(
+                    TranslationService.get("msg.lock_wrong"),
+                    TranslationService.get("msg.lock_wrong_text"),
+                )
                 return
 
         self.current_note = NoteFactory.from_dict(note_data)
+        organized_content = self.editor.media_service.organize_content_media(
+            self.current_note.id,
+            self.current_note.content,
+        )
+        if organized_content != self.current_note.content:
+            self.current_note.update_content(organized_content)
+            self.repo.update_note_content(self.current_note.id, organized_content)
+
+        legacy_media_path = getattr(self.current_note, "file_path", None)
+        if legacy_media_path:
+            organized_path = self.editor.media_service.organize_legacy_media(
+                self.current_note.id,
+                legacy_media_path,
+            )
+            if organized_path != legacy_media_path:
+                self.current_note._file_path = organized_path
+                self.repo.update_note_media_path(self.current_note.id, organized_path)
 
         self.editor.set_data(
             self.current_note.title,
@@ -387,22 +445,29 @@ class MainWindow(ctk.CTk):
             self.current_note.get_type(),
             reminder_at=self.current_note.reminder_at,
             deadline_at=self.current_note.deadline_at,
-            is_locked=self.current_note.is_locked
+            is_locked=self.current_note.is_locked,
+            note_id=self.current_note.id,
         )
 
     def move_current_note_to_folder(self):
         """Hiển thị hộp thoại danh sách Folder để di chuyển ghi chú hiện tại."""
         if not self.current_note:
-            return messagebox.showwarning("Lỗi", "Vui lòng chọn hoặc lưu một ghi chú trước khi di chuyển!")
+            return messagebox.showwarning(
+                TranslationService.get("msg.save_error"),
+                TranslationService.get("msg.folder_move_no_note"),
+            )
 
         # Lấy tất cả thư mục hiện có
         folders = getattr(self.repo, 'get_all_folders', lambda: [])()
         if not folders:
-            return messagebox.showinfo("Thông báo", "Hệ thống chưa có thư mục nào. Vui lòng tạo thư mục trước!")
+            return messagebox.showinfo(
+                TranslationService.get("msg.info"),
+                TranslationService.get("msg.folder_move_no_folders"),
+            )
 
         # Khởi tạo popup phụ
         popup = ctk.CTkToplevel(self)
-        popup.title("Di chuyển vào thư mục")
+        popup.title(TranslationService.get("msg.folder_move_title"))
         popup.geometry("380x300")
         popup.resizable(False, False)
         popup.transient(self)
@@ -414,29 +479,42 @@ class MainWindow(ctk.CTk):
         y = self.winfo_y() + (self.winfo_height() - 300) // 2
         popup.geometry(f"+{x}+{y}")
 
-        ctk.CTkLabel(popup, text="Chọn thư mục đích:", font=ctk.CTkFont(size=14, weight="bold")).pack(pady=15)
+        ctk.CTkLabel(
+            popup,
+            text=TranslationService.get("msg.folder_move_prompt"),
+            font=ctk.CTkFont(size=14, weight="bold"),
+        ).pack(pady=15)
 
-        # Tạo danh sách text hiển thị trên ComboBox
-        options = [" Khung ngoài cùng (Thư mục gốc)"] + [f["name"] for f in folders]
+        folder_map = {folder["id"]: dict(folder) for folder in folders}
+
+        def folder_path(folder_id, seen=None):
+            seen = set(seen or ())
+            if folder_id in seen or folder_id not in folder_map:
+                return ""
+            seen.add(folder_id)
+            folder = folder_map[folder_id]
+            parent_path = folder_path(folder.get("parent_id"), seen)
+            return f"{parent_path} / {folder['name']}" if parent_path else folder["name"]
+
+        root_label = TranslationService.get("msg.folder_root")
+        folder_options = {
+            f"{folder_path(folder_id)}  [{folder_id[:6]}]": folder_id
+            for folder_id in folder_map
+        }
+        options = [root_label] + sorted(folder_options, key=str.casefold)
         combo_folder = ctk.CTkComboBox(popup, values=options, width=280)
         combo_folder.pack(pady=10)
         
         # Thiết kế hiển thị mặc định theo thư mục hiện tại của note nếu có
         combo_folder.set(options[0])
-        for f in folders:
-            if f["id"] == self.current_note.folder_id:
-                combo_folder.set(f["name"])
+        for label, folder_id in folder_options.items():
+            if folder_id == self.current_note.folder_id:
+                combo_folder.set(label)
                 break
 
         def do_move():
             selected_name = combo_folder.get()
-            target_folder_id = None
-            
-            # Lấy ID của folder được chọn
-            for f in folders:
-                if f["name"] == selected_name:
-                    target_folder_id = f["id"]
-                    break
+            target_folder_id = folder_options.get(selected_name)
             
             # Thực thi cập nhật xuống Database & Model object
             self.repo.move_note_to_folder(self.current_note.id, target_folder_id)
@@ -444,10 +522,13 @@ class MainWindow(ctk.CTk):
             
             popup.destroy()
             self.refresh_sidebar() # Vẽ lại cây thư mục trên Sidebar
-            messagebox.showinfo("Thành công", "Đã di chuyển ghi chú thành công!")
+            messagebox.showinfo(
+                TranslationService.get("msg.export_success"),
+                TranslationService.get("msg.folder_move_success"),
+            )
 
         ctk.CTkButton(
-            popup, text="Xác nhận di chuyển", 
+            popup, text=TranslationService.get("msg.folder_move_confirm"),
             fg_color=ThemeManager.get("accent_primary"),
             hover_color=ThemeManager.get("accent_primary_hover"),
             text_color=ThemeManager.get("text_on_accent"),
@@ -456,17 +537,25 @@ class MainWindow(ctk.CTk):
 
     def save_note(self, data, note_type):
         if not data["title"]:
-            return messagebox.showwarning("Lỗi", "Tiêu đề không được trống!")
+            return messagebox.showwarning(
+                TranslationService.get("msg.save_error"),
+                TranslationService.get("msg.title_empty"),
+            )
 
         try:
             extra = self._note_extra_from_form(data)
         except ValueError as exc:
-            return messagebox.showwarning("Lỗi thời gian", str(exc))
+            return messagebox.showwarning(TranslationService.get("msg.time_error"), str(exc))
 
         try:
+            note_id = self.current_note.id if self.current_note else self.pending_note_id
+            if not note_id:
+                note_id = str(uuid.uuid4())
+                self.pending_note_id = note_id
+            data["content"] = self.editor.organize_media(note_id, data["content"])
             if self.current_note is None:
                 raw_data = {
-                    "id": "",
+                    "id": note_id,
                     "type": note_type,
                     "title": data["title"],
                     "content": data["content"],
@@ -478,6 +567,7 @@ class MainWindow(ctk.CTk):
                 command = AddCommand(new_note_obj, self.repo)
                 command.execute()
                 self.current_note = new_note_obj
+                self.pending_note_id = None
                 self.pending_folder_id = None
             else:
                 command = EditCommand(
@@ -489,26 +579,46 @@ class MainWindow(ctk.CTk):
                 )
                 command.execute()
         except ValueError as exc:
-            return messagebox.showwarning("Lỗi", str(exc))
+            return messagebox.showwarning(TranslationService.get("msg.save_error"), str(exc))
+        except OSError as exc:
+            return messagebox.showerror(
+                TranslationService.get("msg.media_error"),
+                TranslationService.get("msg.media_save_error", error=exc),
+            )
 
         self.refresh_sidebar()
-        messagebox.showinfo("Thành công", "Đã lưu ghi chú.")
+        messagebox.showinfo(
+            TranslationService.get("msg.export_success"),
+            TranslationService.get("msg.save_success"),
+        )
 
     def delete_note(self):
-        if self.current_note and messagebox.askyesno("Xác nhận", "Xóa ghi chú?"):
+        if self.current_note and messagebox.askyesno(
+            TranslationService.get("msg.delete_confirm"),
+            TranslationService.get("msg.delete_confirm_text"),
+        ):
             self.repo.delete_note(self.current_note.id)
             self.prepare_new("Text")
             self.refresh_sidebar()
 
     def delete_folder_by_id(self, folder_id, folder_name):
         """Yêu cầu Repository xóa thư mục và cập nhật lại giao diện."""
-        if messagebox.askyesno("Xác nhận xóa", f"Bạn có chắc chắn muốn xóa thư mục '{folder_name}'?\n(Các ghi chú bên trong sẽ được đưa ra ngoài thư mục gốc)."):
+        if messagebox.askyesno(
+            TranslationService.get("msg.folder_delete_title"),
+            TranslationService.get("msg.folder_delete_confirm", name=folder_name),
+        ):
             try:
                 self.repo.delete_folder(folder_id)
-                messagebox.showinfo("Thành công", f"Đã xóa thư mục '{folder_name}'.")
+                messagebox.showinfo(
+                    TranslationService.get("msg.export_success"),
+                    TranslationService.get("msg.folder_delete_success", name=folder_name),
+                )
                 self.refresh_sidebar() 
             except Exception as e:
-                messagebox.showerror("Lỗi", f"Không thể xóa thư mục: {str(e)}")
+                messagebox.showerror(
+                    TranslationService.get("msg.save_error"),
+                    TranslationService.get("msg.folder_delete_error", error=e),
+                )
 
     def handle_undo(self):
         self.editor.undo_text()
@@ -522,8 +632,12 @@ class MainWindow(ctk.CTk):
         self.load_note(note_id)
 
     def permanently_delete_note(self, note_id):
-        if messagebox.askyesno("Xác nhận", "Xóa vĩnh viễn ghi chú này? Không thể khôi phục lại."):
+        if messagebox.askyesno(
+            TranslationService.get("msg.permanent_delete_confirm"),
+            TranslationService.get("msg.permanent_delete_confirm_text"),
+        ):
             self.repo.permanently_delete_note(note_id)
+            self.editor.media_service.delete_note_media(note_id)
             self.refresh_sidebar()
 
     def handle_search(self, event=None):
@@ -542,55 +656,84 @@ class MainWindow(ctk.CTk):
     # =========================
     def toggle_note_lock(self):
         if not self.current_note:
-            return messagebox.showwarning("Lỗi", "Hãy lưu ghi chú trước khi đặt mật khẩu.")
+            return messagebox.showwarning(
+                TranslationService.get("msg.lock_first"),
+                TranslationService.get("msg.lock_first_text"),
+            )
 
         note_data = self.repo.get_note(self.current_note.id)
         if not note_data:
-            return messagebox.showwarning("Lỗi", "Không tìm thấy ghi chú hiện tại.")
+            return messagebox.showwarning(
+                TranslationService.get("msg.lock_not_found"),
+                TranslationService.get("msg.lock_not_found_text"),
+            )
 
         if note_data.get("is_locked"):
-            password = simpledialog.askstring("Gỡ khóa", "Nhập mật khẩu hiện tại:", show="*", parent=self)
+            password = simpledialog.askstring(
+                TranslationService.get("msg.lock_unlock_title"),
+                TranslationService.get("msg.lock_enter_current"),
+                show="*",
+                parent=self,
+            )
             if password is None:
                 return
             if not self.security_manager.verify_password(password, note_data.get("password_hash"), note_data.get("password_salt")):
-                return messagebox.showerror("Sai mật khẩu", "Không thể gỡ khóa vì mật khẩu không đúng.")
+                return messagebox.showerror(
+                    TranslationService.get("msg.lock_unlock_fail"),
+                    TranslationService.get("msg.lock_unlock_fail_text"),
+                )
 
             self.repo.update_note_security(self.current_note.id, False, None, None)
             self.current_note.set_lock_info(False, None, None)
             self.refresh_sidebar()
-            return messagebox.showinfo("Thành công", "Đã gỡ khóa ghi chú.")
+            return messagebox.showinfo(
+                TranslationService.get("msg.lock_unlock_success"),
+                TranslationService.get("msg.lock_unlock_success_text"),
+            )
 
-        password_1 = simpledialog.askstring("Khóa ghi chú", "Nhập mật khẩu mới:", show="*", parent=self)
+        password_1 = simpledialog.askstring(
+            TranslationService.get("msg.lock_set_title"),
+            TranslationService.get("msg.lock_new_password"),
+            show="*",
+            parent=self,
+        )
         if password_1 is None:
             return
         if len(password_1) < 4:
-            return messagebox.showwarning("Mật khẩu yếu", "Mật khẩu nên có ít nhất 4 ký tự.")
-        password_2 = simpledialog.askstring("Xác nhận mật khẩu", "Nhập lại mật khẩu:", show="*", parent=self)
+            return messagebox.showwarning(
+                TranslationService.get("msg.lock_weak"),
+                TranslationService.get("msg.lock_weak_text"),
+            )
+        password_2 = simpledialog.askstring(
+            TranslationService.get("msg.lock_confirm"),
+            TranslationService.get("msg.lock_confirm_text"),
+            show="*",
+            parent=self,
+        )
         if password_2 is None:
             return
         if password_1 != password_2:
-            return messagebox.showwarning("Không khớp", "Hai lần nhập mật khẩu không giống nhau.")
+            return messagebox.showwarning(
+                TranslationService.get("msg.lock_mismatch"),
+                TranslationService.get("msg.lock_mismatch_text"),
+            )
 
         password_hash, password_salt = self.security_manager.hash_password(password_1)
         self.repo.update_note_security(self.current_note.id, True, password_hash, password_salt)
         self.current_note.set_lock_info(True, password_hash, password_salt)
         self.refresh_sidebar()
-        messagebox.showinfo("Thành công", "Đã khóa ghi chú. Lần mở sau sẽ cần nhập mật khẩu.")
+        messagebox.showinfo(
+            TranslationService.get("msg.lock_success"),
+            TranslationService.get("msg.lock_success_text"),
+        )
 
     # =========================
     # Reminder + Calendar
     # =========================
     def handle_reminder_due(self, note_dict, is_deadline=False):
-        def show_notification():
-            title = "📌 Hạn chót ghi chú" if is_deadline else "🔔 Nhắc nhở ghi chú"
-            msg = (
-                f"Đã đến hạn chót (deadline) cho ghi chú: {note_dict.get('title', 'Không có tiêu đề')}"
-                if is_deadline
-                else f"Đã đến giờ nhắc cho ghi chú: {note_dict.get('title', 'Không có tiêu đề')}"
-            )
-            messagebox.showinfo(title, msg)
+        def refresh_after_notification():
             self.refresh_sidebar()
-        self.after(0, show_notification)
+        self.after(0, refresh_after_notification)
 
     def _date_from_iso(self, value):
         if not value:
@@ -650,27 +793,74 @@ class MainWindow(ctk.CTk):
 
     def export_md(self):
         if not self.current_note:
-            return messagebox.showwarning("Lỗi", "Chọn ghi chú để xuất!")
+            return messagebox.showwarning(
+                TranslationService.get("msg.export_no_note"),
+                TranslationService.get("msg.export_no_note_text"),
+            )
         path = filedialog.asksaveasfilename(defaultextension=".md", filetypes=[("Markdown", "*.md")])
         if path:
             try:
                 self.export_service.export_to_markdown(self._current_editor_note_for_export(), path)
-                messagebox.showinfo("Thành công", f"Đã xuất tại: {path}")
+                messagebox.showinfo(
+                    TranslationService.get("msg.export_success"),
+                    TranslationService.get("msg.export_success_text", path=path),
+                )
             except Exception as exc:
-                messagebox.showerror("Lỗi Markdown", f"Không xuất được Markdown: {exc}")
+                messagebox.showerror(
+                    TranslationService.get("msg.export_markdown_error"),
+                    TranslationService.get("msg.export_markdown_error_text", error=exc),
+                )
 
     def export_pdf(self):
         if not self.current_note:
-            return messagebox.showwarning("Lỗi", "Chọn ghi chú để xuất!")
+            return messagebox.showwarning(
+                TranslationService.get("msg.export_no_note"),
+                TranslationService.get("msg.export_no_note_text"),
+            )
         path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
         if path:
             try:
                 self.export_service.export_to_pdf(self._current_editor_note_for_export(), path)
-                messagebox.showinfo("Thành công", f"Đã xuất tại: {path}")
+                messagebox.showinfo(
+                    TranslationService.get("msg.export_success"),
+                    TranslationService.get("msg.export_success_text", path=path),
+                )
             except Exception as e:
-                messagebox.showerror("Lỗi PDF", f"Không xuất được PDF: {e}")
+                messagebox.showerror(
+                    TranslationService.get("msg.export_pdf_error"),
+                    TranslationService.get("msg.export_pdf_error_text", error=e),
+                )
 
     def export_media_zip(self):
+        if not self.current_note:
+            return messagebox.showwarning(
+                TranslationService.get("msg.export_no_note"),
+                TranslationService.get("msg.export_no_note_text")
+            )
+
+        path = filedialog.asksaveasfilename(
+            defaultextension=".zip",
+            filetypes=[("ZIP", "*.zip")]
+        )
+        if not path:
+            return
+
+        try:
+            count = self.export_service.export_media_archive(
+                self._current_editor_note_for_export(),
+                path,
+            )
+            messagebox.showinfo(
+                TranslationService.get("msg.export_success"),
+                TranslationService.get("msg.media_zip_success", count=count, path=path)
+            )
+        except Exception as exc:
+            messagebox.showerror(
+                TranslationService.get("msg.media_zip_error"),
+                str(exc)
+            )
+
+    def export_media_zip_with_password(self):
         if not self.current_note:
             return messagebox.showwarning(
                 TranslationService.get("msg.export_no_note"),
@@ -688,7 +878,7 @@ class MainWindow(ctk.CTk):
         if len(password) < 4:
             return messagebox.showwarning(
                 TranslationService.get("msg.media_zip_password_title"),
-                TranslationService.get("msg.media_zip_password_short")
+                TranslationService.get("msg.media_zip_password_short"),
             )
 
         confirmation = simpledialog.askstring(
@@ -702,7 +892,7 @@ class MainWindow(ctk.CTk):
         if confirmation != password:
             return messagebox.showwarning(
                 TranslationService.get("msg.media_zip_password_title"),
-                TranslationService.get("msg.media_zip_password_mismatch")
+                TranslationService.get("msg.media_zip_password_mismatch"),
             )
 
         path = filedialog.asksaveasfilename(
@@ -713,14 +903,18 @@ class MainWindow(ctk.CTk):
             return
 
         try:
-            count = self.export_service.export_media_archive(
+            count = self.export_service.export_encrypted_media_archive(
                 self._current_editor_note_for_export(),
                 path,
                 password,
             )
             messagebox.showinfo(
                 TranslationService.get("msg.export_success"),
-                TranslationService.get("msg.media_zip_success", count=count, path=path)
+                TranslationService.get(
+                    "msg.media_zip_password_success",
+                    count=count,
+                    path=path,
+                )
             )
         except Exception as exc:
             messagebox.showerror(
@@ -731,19 +925,30 @@ class MainWindow(ctk.CTk):
     def open_media_zip(self):
         path = filedialog.askopenfilename(
             title=TranslationService.get("msg.media_zip_open_title"),
-            filetypes=[("ZIP", "*.zip"), ("All files", "*.*")]
+            filetypes=[
+                ("ZIP", "*.zip"),
+                (TranslationService.get("filetype.all_files"), "*.*"),
+            ]
         )
         if not path:
             return
 
-        password = simpledialog.askstring(
-            TranslationService.get("msg.media_zip_password_title"),
-            TranslationService.get("msg.media_zip_open_password"),
-            show="*",
-            parent=self,
-        )
-        if password is None:
-            return
+        password = None
+        try:
+            if self.export_service.archive_requires_password(path):
+                password = simpledialog.askstring(
+                    TranslationService.get("msg.media_zip_password_title"),
+                    TranslationService.get("msg.media_zip_open_password"),
+                    show="*",
+                    parent=self,
+                )
+                if password is None:
+                    return
+        except Exception as exc:
+            return messagebox.showerror(
+                TranslationService.get("msg.media_zip_error"),
+                str(exc),
+            )
 
         destination = filedialog.askdirectory(
             title=TranslationService.get("msg.media_zip_destination")
@@ -755,7 +960,7 @@ class MainWindow(ctk.CTk):
             count = self.export_service.extract_media_archive(
                 path,
                 destination,
-                password,
+                password=password,
             )
             messagebox.showinfo(
                 TranslationService.get("msg.export_success"),
@@ -765,14 +970,10 @@ class MainWindow(ctk.CTk):
                     path=destination,
                 )
             )
-        except RuntimeError as exc:
-            detail = str(exc)
-            lowered = detail.casefold()
-            if "password" in lowered or "bad crc" in lowered:
-                detail = TranslationService.get("msg.media_zip_wrong_password")
+        except RuntimeError:
             messagebox.showerror(
                 TranslationService.get("msg.media_zip_error"),
-                detail
+                TranslationService.get("msg.media_zip_wrong_password"),
             )
         except Exception as exc:
             messagebox.showerror(
@@ -783,11 +984,8 @@ class MainWindow(ctk.CTk):
     def on_close(self):
         from tkinter import messagebox
         answer = messagebox.askyesnocancel(
-            "Tùy chọn thoát",
-            "Bạn muốn tắt ứng dụng như thế nào?\n\n"
-            "• Chọn [Yes / Có]: Thoát hoàn toàn ứng dụng.\n"
-            "• Chọn [No / Không]: Vẫn chạy ngầm dưới góc màn hình (System Tray).\n"
-            "• Chọn [Cancel / Hủy]: Trở lại ứng dụng."
+            TranslationService.get("msg.close_title"),
+            TranslationService.get("msg.close_prompt"),
         )
         if answer is True: 
             self.quit_app_completely()
@@ -804,14 +1002,21 @@ class MainWindow(ctk.CTk):
         import threading
         self.withdraw()
         try:
-            image = Image.open("icon.png")
+            bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+            icon_path = (bundle_root / "icon.png").resolve()
+            image = Image.open(icon_path)
         except Exception:
             image = Image.new('RGB', (64, 64), color=(0, 0, 0))
         menu = pystray.Menu(
-            pystray.MenuItem("Mở Engraver", self.show_window_from_tray),
-            pystray.MenuItem("Thoát hoàn toàn", self.quit_app_completely)
+            pystray.MenuItem(TranslationService.get("tray.open"), self.show_window_from_tray),
+            pystray.MenuItem(TranslationService.get("tray.quit"), self.quit_app_completely)
         )
-        self.tray_icon = pystray.Icon("Engraver", image, "Engraver Note App", menu)
+        self.tray_icon = pystray.Icon(
+            "Engraver",
+            image,
+            TranslationService.get("tray.tooltip"),
+            menu,
+        )
         threading.Thread(target=self.tray_icon.run, daemon=True).start()
 
     def show_window_from_tray(self, icon=None, item=None):
@@ -850,6 +1055,9 @@ class MainWindow(ctk.CTk):
             reminder_service = getattr(self, "reminder_service", None)
             if reminder_service is not None:
                 reminder_service.stop()
+            database = getattr(getattr(self, "repo", None), "db", None)
+            if database is not None:
+                database.close()
             self.quit()
             self.destroy()
 
@@ -864,18 +1072,19 @@ class MainWindow(ctk.CTk):
         import tempfile
         from pathlib import Path
         file_path = filedialog.askopenfilename(
-            title="Chọn file để nhập",
+            title=TranslationService.get("import.title"),
             filetypes=[
-                ("Tài liệu hỗ trợ", "*.txt *.md *.docx *.pdf"), 
-                ("Word Document", "*.docx"),
-                ("PDF files", "*.pdf"),
-                ("Text/Markdown", "*.txt *.md"), 
-                ("All files", "*.*")
+                (TranslationService.get("import.supported_documents"), "*.txt *.md *.docx *.pdf"),
+                (TranslationService.get("filetype.word_document"), "*.docx"),
+                (TranslationService.get("filetype.pdf_files"), "*.pdf"),
+                (TranslationService.get("filetype.text_markdown"), "*.txt *.md"),
+                (TranslationService.get("filetype.all_files"), "*.*"),
             ]
         )
         
         if not file_path:
             return
+        import_note_id = str(uuid.uuid4())
         try:
             ext = os.path.splitext(file_path)[1].lower()
             content_text = ""
@@ -887,7 +1096,9 @@ class MainWindow(ctk.CTk):
                     for img_name in os.listdir(temp_dir):
                         img_path = os.path.join(temp_dir, img_name)
                         try:
-                            attachment = self.editor.media_service.import_file(Path(img_path))
+                            attachment = self.editor.media_service.import_file(
+                                Path(img_path), note_id=import_note_id
+                            )
                             attachment["position"] = len(content_text)
                             extracted_media_list.append(attachment)
                         except Exception:
@@ -914,17 +1125,22 @@ class MainWindow(ctk.CTk):
                                 with open(temp_img_path, "wb") as img_f:
                                     img_f.write(image_bytes)
                                 
-                                attachment = self.editor.media_service.import_file(Path(temp_img_path))
+                                attachment = self.editor.media_service.import_file(
+                                    Path(temp_img_path), note_id=import_note_id
+                                )
                                 attachment["position"] = len(content_text)
                                 extracted_media_list.append(attachment)
                     except ImportError:
-                        messagebox.showerror("Thiếu thư viện", "Vui lòng cài đặt PyMuPDF bằng lệnh:\npip install PyMuPDF")
+                        messagebox.showerror(
+                            TranslationService.get("import.missing_pymupdf_title"),
+                            TranslationService.get("import.missing_pymupdf_text"),
+                        )
                         return
                 else:
                     with open(file_path, "r", encoding="utf-8") as f:
                         content_text = f.read()
                 file_name = os.path.basename(file_path).split('.')[0]
-                self.prepare_new("Text")
+                self.prepare_new("Text", note_id=import_note_id)
                 self.editor.entry_title.delete(0, 'end')
                 self.editor.entry_title.insert(0, file_name)
                 full_note_content = {
@@ -934,6 +1150,13 @@ class MainWindow(ctk.CTk):
                 }
                 self.editor._render_content(full_note_content)
                 self.editor._media_attachments = extracted_media_list
-                messagebox.showinfo("Thành công", f"Đã nhập dữ liệu văn bản kèm {len(extracted_media_list)} ảnh từ file thành công!\nBấm 'Lưu Ghi Chú' để hoàn tất.")
+                messagebox.showinfo(
+                    TranslationService.get("msg.export_success"),
+                    TranslationService.get("import.success", count=len(extracted_media_list)),
+                )
         except Exception as e:
-            messagebox.showerror("Lỗi hệ thống", f"Không thể trích xuất file: {str(e)}")
+            self.editor.media_service.delete_note_media(import_note_id)
+            messagebox.showerror(
+                TranslationService.get("import.error_title"),
+                TranslationService.get("import.error_text", error=e),
+            )

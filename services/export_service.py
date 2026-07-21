@@ -3,6 +3,7 @@ import os
 import tempfile
 import json
 import re
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
 
@@ -88,7 +89,7 @@ class ExportService:
         if not valid_media:
             return text
 
-        output_path = Path(output_path)
+        output_path = Path(output_path).expanduser().resolve()
         assets_dir = output_path.parent / f"{output_path.stem}_media"
         assets_dir.mkdir(parents=True, exist_ok=True)
         links = []
@@ -119,18 +120,54 @@ class ExportService:
                 position = len(text)
             links.append((max(0, min(position, len(text))), markdown_link))
 
+        return self._insert_markdown_links(text, links)
+
+    @staticmethod
+    def _insert_markdown_links(text, links):
         for position, markdown_link in sorted(links, key=lambda value: value[0], reverse=True):
             text = f"{text[:position]}{markdown_link}{text[position:]}"
         return text
 
+    def _markdown_document(self, note, body):
+        sections = [f"# {note.title}", ""]
+        if note.deadline_at:
+            sections.extend([f"**Deadline:** {note.deadline_at}", ""])
+        if note.reminder_at:
+            sections.extend([f"**Reminder:** {note.reminder_at}", ""])
+        sections.append(body)
+        return "\n".join(sections)
+
+    def _archive_markdown_content(self, note, packaged_media):
+        """Build portable Markdown links for media stored under ZIP/media/."""
+        content = note.content
+        text = self._content_to_text(note) if isinstance(content, list) else self._plain_text_from_content(content)
+        links = []
+        for item, target_name in packaged_media:
+            original_name = Path(str(item.get("name") or target_name)).name
+            relative_target = quote(f"media/{target_name}", safe="/")
+            markdown_link = (
+                f"![{original_name}]({relative_target})"
+                if item.get("kind") == "image"
+                else f"[{original_name}]({relative_target})"
+            )
+            try:
+                position = int(item.get("position", len(text)))
+            except (TypeError, ValueError):
+                position = len(text)
+            links.append((max(0, min(position, len(text))), markdown_link))
+        return self._insert_markdown_links(text, links)
+
     def export_to_markdown(self, note, file_path):
-        with open(file_path, "w", encoding="utf-8") as file:
-            file.write(f"# {note.title}\n\n")
-            if note.deadline_at:
-                file.write(f"**Deadline:** {note.deadline_at}\n\n")
-            if note.reminder_at:
-                file.write(f"**Reminder:** {note.reminder_at}\n\n")
-            file.write(self._markdown_content(note, file_path))
+        output_path = Path(file_path).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", encoding="utf-8") as file:
+            file.write(
+                self._markdown_document(
+                    note,
+                    self._markdown_content(note, output_path),
+                )
+            )
+        return str(output_path)
 
     @staticmethod
     def _pdf_multi_cell(pdf, line_height, text):
@@ -233,6 +270,8 @@ class ExportService:
         self._write_pdf_text(pdf, text[cursor:])
 
     def export_to_pdf(self, note, file_path):
+        output_path = Path(file_path).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         pdf = FPDF()
         pdf.add_page()
         font_family = self._set_unicode_font(pdf)
@@ -247,7 +286,8 @@ class ExportService:
 
         with tempfile.TemporaryDirectory(prefix="noteapp-pdf-") as temp_dir:
             self._write_pdf_content(pdf, note, font_family, temp_dir)
-            pdf.output(file_path)
+            pdf.output(str(output_path))
+        return str(output_path)
 
     @staticmethod
     def _safe_archive_name(value, fallback="media"):
@@ -268,8 +308,107 @@ class ExportService:
                 resolved.append((item, source))
         return resolved
 
-    def export_media_archive(self, note, file_path, password):
-        """Create an AES-256 encrypted ZIP containing a note's media folder."""
+    def _write_note_archive_contents(self, archive, note, media, folder_name):
+        """Write the shared portable note package into an open ZIP archive."""
+        used_names = set()
+        manifest_items = []
+        packaged_media = []
+
+        for index, (item, source) in enumerate(media, start=1):
+            original_name = self._safe_archive_name(
+                item.get("name") or source.name,
+                f"media-{index}{source.suffix}"
+            )
+            target_name = original_name
+            suffix_number = 2
+            while target_name.casefold() in used_names:
+                target_name = (
+                    f"{Path(original_name).stem}_{suffix_number}"
+                    f"{Path(original_name).suffix}"
+                )
+                suffix_number += 1
+            used_names.add(target_name.casefold())
+            archive_name = f"{folder_name}/media/{target_name}"
+            archive.write(source, arcname=archive_name)
+            packaged_media.append((item, target_name))
+            manifest_items.append({
+                "name": target_name,
+                "path": f"media/{target_name}",
+                "kind": item.get("kind") or MediaService.media_kind(source) or "media",
+                "size": source.stat().st_size,
+            })
+
+        markdown_body = self._archive_markdown_content(note, packaged_media)
+        archive.writestr(
+            f"{folder_name}/note.md",
+            self._markdown_document(note, markdown_body).encode("utf-8"),
+        )
+        archive.writestr(
+            f"{folder_name}/manifest.json",
+            json.dumps(
+                {
+                    "format_version": 2,
+                    "note_title": str(getattr(note, "title", "")),
+                    "note_file": "note.md",
+                    "media_directory": "media",
+                    "files": manifest_items,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ).encode("utf-8"),
+        )
+        return len(media)
+
+    @staticmethod
+    def _archive_output_details(note, file_path):
+        output_path = Path(file_path).expanduser().resolve()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        folder_name = ExportService._safe_archive_name(
+            f"{getattr(note, 'title', '')}_note",
+            "note_package"
+        )
+        temp_file = tempfile.NamedTemporaryFile(
+            prefix=f".{output_path.stem}-",
+            suffix=".tmp",
+            dir=output_path.parent,
+            delete=False,
+        )
+        temp_path = Path(temp_file.name)
+        temp_file.close()
+        return output_path, folder_name, temp_path
+
+    def export_media_archive(self, note, file_path):
+        """Create a portable ZIP containing note.md, media/, and a manifest."""
+        media = self._media_for_archive(note)
+        if not media:
+            raise ValueError("Ghi chú không có file media hợp lệ để đóng gói")
+
+        output_path, folder_name, temp_path = self._archive_output_details(
+            note,
+            file_path,
+        )
+
+        try:
+            with zipfile.ZipFile(
+                temp_path,
+                "w",
+                compression=zipfile.ZIP_DEFLATED,
+            ) as archive:
+                count = self._write_note_archive_contents(
+                    archive,
+                    note,
+                    media,
+                    folder_name,
+                )
+            os.replace(temp_path, output_path)
+        except Exception:
+            temp_path.unlink(missing_ok=True)
+            raise
+
+        return count
+
+    def export_encrypted_media_archive(self, note, file_path, password):
+        """Create the same note package as an AES-256 encrypted ZIP."""
         if not password or len(password) < 4:
             raise ValueError("Mật khẩu ZIP phải có ít nhất 4 ký tự")
 
@@ -284,24 +423,10 @@ class ExportService:
         if not media:
             raise ValueError("Ghi chú không có file media hợp lệ để đóng gói")
 
-        output_path = Path(file_path).expanduser().resolve()
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        folder_name = self._safe_archive_name(
-            f"{getattr(note, 'title', '')}_media",
-            "note_media"
+        output_path, folder_name, temp_path = self._archive_output_details(
+            note,
+            file_path,
         )
-        used_names = set()
-        manifest_items = []
-
-        temp_file = tempfile.NamedTemporaryFile(
-            prefix=f".{output_path.stem}-",
-            suffix=".tmp",
-            dir=output_path.parent,
-            delete=False,
-        )
-        temp_path = Path(temp_file.name)
-        temp_file.close()
-
         try:
             with pyzipper.AESZipFile(
                 temp_path,
@@ -311,46 +436,27 @@ class ExportService:
             ) as archive:
                 archive.setpassword(password.encode("utf-8"))
                 archive.setencryption(pyzipper.WZ_AES, nbits=256)
-
-                for index, (item, source) in enumerate(media, start=1):
-                    original_name = self._safe_archive_name(
-                        item.get("name") or source.name,
-                        f"media-{index}{source.suffix}"
-                    )
-                    target_name = original_name
-                    suffix_number = 2
-                    while target_name.casefold() in used_names:
-                        target_name = (
-                            f"{Path(original_name).stem}_{suffix_number}"
-                            f"{Path(original_name).suffix}"
-                        )
-                        suffix_number += 1
-                    used_names.add(target_name.casefold())
-                    archive_name = f"{folder_name}/{target_name}"
-                    archive.write(source, arcname=archive_name)
-                    manifest_items.append({
-                        "name": target_name,
-                        "kind": item.get("kind") or MediaService.media_kind(source) or "media",
-                        "size": source.stat().st_size,
-                    })
-
-                archive.writestr(
-                    f"{folder_name}/manifest.json",
-                    json.dumps(
-                        {
-                            "note_title": str(getattr(note, "title", "")),
-                            "files": manifest_items,
-                        },
-                        ensure_ascii=False,
-                        indent=2,
-                    ).encode("utf-8"),
+                count = self._write_note_archive_contents(
+                    archive,
+                    note,
+                    media,
+                    folder_name,
                 )
             os.replace(temp_path, output_path)
         except Exception:
             temp_path.unlink(missing_ok=True)
             raise
 
-        return len(media)
+        return count
+
+    @staticmethod
+    def archive_requires_password(file_path):
+        """Return True when at least one ZIP member is encrypted."""
+        archive_path = Path(file_path).expanduser().resolve()
+        if not archive_path.is_file():
+            raise FileNotFoundError(f"Không tìm thấy file ZIP: {archive_path.name}")
+        with zipfile.ZipFile(archive_path, "r") as archive:
+            return any(member.flag_bits & 0x1 for member in archive.infolist())
 
     @staticmethod
     def _validated_archive_members(archive, destination_dir):
@@ -376,29 +482,34 @@ class ExportService:
                 ) from exc
         return members
 
-    def extract_media_archive(self, file_path, destination_dir, password):
-        """Extract an AES media ZIP after validating its member paths."""
-        if not password:
-            raise ValueError("Mật khẩu ZIP không được để trống")
-
-        try:
-            import pyzipper
-        except ImportError as exc:
-            raise RuntimeError(
-                "Thiếu thư viện pyzipper. Hãy chạy: pip install -r requirements.txt"
-            ) from exc
-
+    def extract_media_archive(self, file_path, destination_dir, password=None):
+        """Extract a note ZIP after validating all member paths."""
         archive_path = Path(file_path).expanduser().resolve()
         if not archive_path.is_file():
             raise FileNotFoundError(f"Không tìm thấy file ZIP: {archive_path.name}")
 
         destination = Path(destination_dir).expanduser().resolve()
         destination.mkdir(parents=True, exist_ok=True)
-        with pyzipper.AESZipFile(archive_path, "r") as archive:
+        encrypted = self.archive_requires_password(archive_path)
+        if encrypted and not password:
+            raise ValueError("ZIP yêu cầu mật khẩu")
+
+        if encrypted:
+            try:
+                import pyzipper
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Thiếu thư viện pyzipper. Hãy chạy: pip install -r requirements.txt"
+                ) from exc
+            archive_context = pyzipper.AESZipFile(archive_path, "r")
+        else:
+            archive_context = zipfile.ZipFile(archive_path, "r")
+
+        with archive_context as archive:
             members = self._validated_archive_members(archive, destination)
             archive.extractall(
                 path=destination,
                 members=members,
-                pwd=password.encode("utf-8"),
+                pwd=password.encode("utf-8") if password else None,
             )
         return sum(1 for member in members if not member.is_dir())

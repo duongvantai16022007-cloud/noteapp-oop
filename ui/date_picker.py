@@ -3,13 +3,14 @@ import datetime
 import calendar
 from tkinter import messagebox
 from services.theme_service import ThemeManager
+from services.translation_service import TranslationService
 
 class CTkDatePicker(ctk.CTkToplevel):
-    def __init__(self, master, initial_dt=None, title="Chọn thời gian", on_select=None):
+    def __init__(self, master, initial_dt=None, title=None, on_select=None):
         super().__init__(master)
         self.withdraw()
         
-        self.title(title)
+        self.title(title or TranslationService.get("datepicker.title"))
         self.geometry("450x550")
         self.resizable(False, False)
         self.configure(fg_color=ThemeManager.get("popup_bg"))
@@ -73,14 +74,14 @@ class CTkDatePicker(ctk.CTkToplevel):
             dropdown_hover_color=ThemeManager.get("btn_secondary_hover")
         )
 
-        ctk.CTkLabel(time_frame, text="Giờ:", font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(time_frame, text=TranslationService.get("datepicker.hour"), font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(side="left", padx=(0, 10))
         
         hours = [f"{i:02d}" for i in range(24)]
         self.hour_var = ctk.StringVar(value=f"{self.selected_time.hour:02d}")
         self.hour_menu = ctk.CTkOptionMenu(time_frame, values=hours, variable=self.hour_var, width=70, **menu_kwargs)
         self.hour_menu.pack(side="left", padx=(0, 20))
         
-        ctk.CTkLabel(time_frame, text="Phút:", font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(side="left", padx=(0, 10))
+        ctk.CTkLabel(time_frame, text=TranslationService.get("datepicker.minute"), font=ctk.CTkFont(weight="bold"), text_color=ThemeManager.get("text_primary")).pack(side="left", padx=(0, 10))
         
         minutes = [f"{i:02d}" for i in range(60)]
         self.minute_var = ctk.StringVar(value=f"{self.selected_time.minute:02d}")
@@ -92,19 +93,19 @@ class CTkDatePicker(ctk.CTkToplevel):
         footer.pack(fill="x", padx=20, pady=(10, 20))
         
         ctk.CTkButton(
-            footer, text="Đặt về hiện tại", 
+            footer, text=TranslationService.get("datepicker.set_now"),
             command=self._set_now,
             fg_color=ThemeManager.get("btn_secondary"), hover_color=ThemeManager.get("btn_secondary_hover"), text_color=ThemeManager.get("text_primary")
         ).pack(side="left")
         
         ctk.CTkButton(
-            footer, text="Áp dụng", 
+            footer, text=TranslationService.get("datepicker.apply"),
             command=self._apply,
             fg_color=ThemeManager.get("accent_primary"), hover_color=ThemeManager.get("accent_primary_hover"), text_color=ThemeManager.get("text_on_accent")
         ).pack(side="right")
         
         ctk.CTkButton(
-            footer, text="Hủy", 
+            footer, text=TranslationService.get("datepicker.cancel"),
             fg_color=ThemeManager.get("btn_cancel"), hover_color=ThemeManager.get("btn_cancel_hover"), text_color=ThemeManager.get("text_primary"),
             command=self.destroy
         ).pack(side="right", padx=10)
@@ -138,9 +139,15 @@ class CTkDatePicker(ctk.CTkToplevel):
         for row in range(7):
             self.grid_frame.grid_rowconfigure(row, weight=1, uniform="cal")
 
-        self.lbl_month.configure(text=f"Tháng {self.current_month.month:02d}/{self.current_month.year}")
+        self.lbl_month.configure(
+            text=TranslationService.get(
+                "datepicker.month_label",
+                self.current_month.month,
+                self.current_month.year,
+            )
+        )
 
-        weekdays = ["T2", "T3", "T4", "T5", "T6", "T7", "CN"]
+        weekdays = TranslationService.weekdays()
         for col, day_name in enumerate(weekdays):
             ctk.CTkLabel(
                 self.grid_frame, text=day_name, font=ctk.CTkFont(weight="bold"),
@@ -192,4 +199,8 @@ class CTkDatePicker(ctk.CTkToplevel):
                 
             self.destroy()
         except ValueError:
-            messagebox.showwarning("Lỗi thời gian", "Vui lòng chọn ngày, giờ và phút hợp lệ.")
+            messagebox.showwarning(
+                TranslationService.get("datepicker.time_error"),
+                TranslationService.get("datepicker.time_error_text"),
+                parent=self,
+            )

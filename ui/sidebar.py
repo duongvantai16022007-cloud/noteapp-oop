@@ -22,6 +22,7 @@ class SidebarFrame(ctk.CTkFrame):
         self.on_permanently_delete = on_permanently_delete
         self._tree_render_generation = 0
         self._deleted_render_generation = 0
+        self._collapsed_folder_ids = set()
         initial_settings = initial_settings or {}
 
         _ = TranslationService.get
@@ -124,72 +125,107 @@ class SidebarFrame(ctk.CTkFrame):
         render_next()
 
     def update_tree_list(self, folders, notes_by_folder):
-        """Redraws the folder tree with solid nested list backing structures."""
+        """Render an arbitrary-depth folder tree and its direct notes."""
+        _ = TranslationService.get
         self._tree_render_generation += 1
         for widget in self.scroll_list.winfo_children():
             widget.destroy()
-            
-        _ = TranslationService.get
+
         note_tasks = []
+        folder_map = {row["id"]: dict(row) for row in folders}
+        children = {}
+        for folder in folder_map.values():
+            parent_id = folder.get("parent_id")
+            if parent_id == folder["id"] or parent_id not in folder_map:
+                parent_id = None
+            children.setdefault(parent_id, []).append(folder)
+        for child_list in children.values():
+            child_list.sort(key=lambda item: str(item.get("name", "")).casefold())
 
-        for folder in folders:
-            f_id = folder["id"]
-            f_name = folder["name"]
-            
-            folder_container_frame = ctk.CTkFrame(self.scroll_list, fg_color="transparent")
-            folder_container_frame.pack(fill="x", pady=2, padx=4)
-            
-            header_frame = ctk.CTkFrame(folder_container_frame, fg_color="transparent")
-            header_frame.pack(fill="x")
-            
-            sub_notes_frame = ctk.CTkFrame(folder_container_frame, fg_color="transparent")
-            
-            def toggle(frame=sub_notes_frame):
-                if frame.winfo_manager(): 
-                    frame.pack_forget()
-                else: 
-                    frame.pack(fill="x", padx=(14, 0))
+        visited = set()
 
-            btn_folder = ctk.CTkButton(
-                header_frame, text=f"{f_name}", anchor="w",
+        def draw_folder(folder, parent, ancestry=frozenset()):
+            folder_id = folder["id"]
+            if folder_id in ancestry or folder_id in visited:
+                return
+            visited.add(folder_id)
+            folder_name = folder["name"]
+
+            container = ctk.CTkFrame(parent, fg_color="transparent")
+            container.pack(fill="x", pady=2, padx=4)
+            header = ctk.CTkFrame(container, fg_color="transparent")
+            header.pack(fill="x")
+            content = ctk.CTkFrame(container, fg_color="transparent")
+
+            folder_button = ctk.CTkButton(
+                header,
+                text=f"▾ {folder_name}" if folder_id not in self._collapsed_folder_ids else f"▸ {folder_name}",
+                anchor="w",
                 font=ctk.CTkFont(size=13, weight="bold"),
-                fg_color=ThemeManager.get("cell_bg_muted"), 
+                fg_color=ThemeManager.get("cell_bg_muted"),
                 hover_color=ThemeManager.get("popup_bg"),
                 text_color=ThemeManager.get("text_primary"),
                 corner_radius=6,
                 height=32,
-                command=toggle
             )
-            btn_folder.pack(side="left", fill="x", expand=True, padx=(0, 2))
+            def toggle():
+                if content.winfo_manager():
+                    content.pack_forget()
+                    self._collapsed_folder_ids.add(folder_id)
+                    folder_button.configure(text=f"▸ {folder_name}")
+                else:
+                    content.pack(fill="x", padx=(12, 0))
+                    self._collapsed_folder_ids.discard(folder_id)
+                    folder_button.configure(text=f"▾ {folder_name}")
 
-            btn_delete_folder = ctk.CTkButton(
-                header_frame, text="✕", width=26, height=32,
-                font=ctk.CTkFont(size=11),
-                fg_color="transparent",
-                hover_color=ThemeManager.get("accent_danger_hover"),
-                text_color=ThemeManager.get("accent_danger"),
-                corner_radius=4,
-                command=lambda fid=f_id, fname=f_name: self._on_delete_folder_click(fid, fname)
-            )
-            btn_delete_folder.pack(side="right")
+            folder_button.configure(command=toggle)
 
-            btn_add_note = ctk.CTkButton(
-                header_frame, text="＋", width=26, height=32,
-                font=ctk.CTkFont(size=12),
-                fg_color="transparent",
+            # Reserve the action area before allowing the folder-name button
+            # to expand. Packing the expanding button first could push F+ out
+            # of the visible sidebar on Windows and at deeper nesting levels.
+            action_frame = ctk.CTkFrame(header, fg_color="transparent")
+            action_frame.pack(side="right")
+
+            ctk.CTkButton(
+                action_frame, text="F+", width=30, height=32,
+                font=ctk.CTkFont(size=10), fg_color="transparent",
                 hover_color=ThemeManager.get("popup_bg"),
-                text_color=ThemeManager.get("text_primary"),
-                corner_radius=4,
-                command=lambda fid=f_id, fname=f_name: self._on_add_note_to_folder_click(fid, fname)
-            )
-            btn_add_note.pack(side="right", padx=(0, 2))
-            
-            sub_notes_frame.pack(fill="x", padx=(14, 0)) 
-            
-            for note in notes_by_folder.get(f_id, []):
+                text_color=ThemeManager.get("text_primary"), corner_radius=4,
+                command=lambda fid=folder_id: self._on_new_subfolder_click(fid),
+            ).pack(side="left", padx=(0, 2))
+            ctk.CTkButton(
+                action_frame, text="N+", width=30, height=32,
+                font=ctk.CTkFont(size=10), fg_color="transparent",
+                hover_color=ThemeManager.get("popup_bg"),
+                text_color=ThemeManager.get("text_primary"), corner_radius=4,
+                command=lambda fid=folder_id, name=folder_name: self._on_add_note_to_folder_click(fid, name),
+            ).pack(side="left", padx=(0, 2))
+            ctk.CTkButton(
+                action_frame, text="✕", width=26, height=32,
+                font=ctk.CTkFont(size=11), fg_color="transparent",
+                hover_color=ThemeManager.get("accent_danger_hover"),
+                text_color=ThemeManager.get("accent_danger"), corner_radius=4,
+                command=lambda fid=folder_id, name=folder_name: self._on_delete_folder_click(fid, name),
+            ).pack(side="left")
+            folder_button.pack(side="left", fill="x", expand=True, padx=(0, 2))
+
+            if folder_id not in self._collapsed_folder_ids:
+                content.pack(fill="x", padx=(12, 0))
+
+            next_ancestry = set(ancestry)
+            next_ancestry.add(folder_id)
+            for child in children.get(folder_id, []):
+                draw_folder(child, content, frozenset(next_ancestry))
+            for note in notes_by_folder.get(folder_id, []):
                 note_tasks.append(
-                    lambda parent=sub_notes_frame, item=note: self._draw_single_note(parent, item)
+                    lambda target=content, item=note: self._draw_single_note(target, item)
                 )
+
+        for root_folder in children.get(None, []):
+            draw_folder(root_folder, self.scroll_list)
+        for folder in folder_map.values():
+            if folder["id"] not in visited:
+                draw_folder(folder, self.scroll_list)
 
         if folders and notes_by_folder.get("root"):
             lbl_divider = ctk.CTkLabel(
@@ -320,3 +356,20 @@ class SidebarFrame(ctk.CTkFrame):
     def _on_add_note_to_folder_click(self, folder_id, folder_name):
         if hasattr(self.master, "prepare_new_in_folder"):
             self.master.prepare_new_in_folder(folder_id, folder_name)
+
+    def _on_new_subfolder_click(self, parent_id):
+        from tkinter import simpledialog, messagebox
+        _ = TranslationService.get
+        folder_name = simpledialog.askstring(
+            _("msg.new_subfolder_title"),
+            _("msg.new_subfolder_prompt"),
+            parent=self,
+        )
+        if folder_name is None:
+            return
+        folder_name = folder_name.strip()
+        if not folder_name:
+            messagebox.showwarning(_("msg.save_error"), _("msg.folder_empty"), parent=self)
+            return
+        if hasattr(self.master, "create_new_folder"):
+            self.master.create_new_folder(folder_name, parent_id=parent_id)

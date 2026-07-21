@@ -20,6 +20,7 @@ class base(ABC):
         password_hash=None,
         password_salt=None,
         reminder_notified=0,
+        deadline_notified=0,
         folder_id=None
     ):
         self._id = str(uuid.uuid4())
@@ -36,6 +37,7 @@ class base(ABC):
         self._password_hash = password_hash
         self._password_salt = password_salt
         self._reminder_notified = int(reminder_notified or 0)
+        self._deadline_notified = int(deadline_notified or 0)
         self._folder_id = folder_id
 
     @property
@@ -104,6 +106,10 @@ class base(ABC):
     def reminder_notified(self):
         return self._reminder_notified
 
+    @property
+    def deadline_notified(self):
+        return self._deadline_notified
+
     def update_content(self, new_content):
         self._content = new_content
         self._updated = datetime.now()
@@ -133,6 +139,7 @@ class base(ABC):
             "password_hash": self._password_hash,
             "password_salt": self._password_salt,
             "reminder_notified": self._reminder_notified,
+            "deadline_notified": self._deadline_notified,
             "folder_id": self._folder_id
         }
 

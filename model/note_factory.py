@@ -36,6 +36,7 @@ class NoteFactory:
             "password_hash": data.get("password_hash"),
             "password_salt": data.get("password_salt"),
             "reminder_notified": data.get("reminder_notified", 0),
+            "deadline_notified": data.get("deadline_notified", 0),
             "folder_id": data.get("folder_id")
         }
 

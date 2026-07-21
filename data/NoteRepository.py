@@ -4,8 +4,8 @@ import datetime
 from .DatabaseManager import DatabaseManager
 
 class NoteRepository:
-    def __init__(self):
-        self.db = DatabaseManager()
+    def __init__(self, db=None):
+        self.db = db or DatabaseManager()
 
     def _normalize_content(self, content):
         if isinstance(content, (list, dict)):
@@ -69,16 +69,54 @@ class NoteRepository:
         self.db.execute_query(query, params)
         return note_id
 
-    def create_folder(self, name):
+    def create_folder(self, name, parent_id=None):
+        name = str(name or "").strip()
+        if not name:
+            raise ValueError("Tên thư mục không được để trống")
+        if parent_id and not self.get_folder(parent_id):
+            raise ValueError("Thư mục cha không tồn tại")
         folder_id = str(uuid.uuid4())
         created_at = datetime.datetime.now().replace(microsecond=0).isoformat()
-        query = "INSERT INTO folders (id, name, created_at) VALUES (?, ?, ?)"
-        self.db.execute_query(query, (folder_id, name, created_at))
+        query = "INSERT INTO folders (id, name, created_at, parent_id) VALUES (?, ?, ?, ?)"
+        self.db.execute_query(query, (folder_id, name, created_at, parent_id or None))
         return folder_id
 
     def get_all_folders(self):
-        query = "SELECT * FROM folders ORDER BY name ASC"
+        query = "SELECT * FROM folders ORDER BY name COLLATE NOCASE ASC, created_at ASC"
         return self.db.fetch_all(query)
+
+    def get_folder(self, folder_id):
+        return self.db.fetch_one("SELECT * FROM folders WHERE id = ?", (folder_id,))
+
+    def get_descendant_folder_ids(self, folder_id):
+        rows = self.get_all_folders()
+        children = {}
+        for row in rows:
+            children.setdefault(row["parent_id"], []).append(row["id"])
+        descendants = []
+        pending = list(children.get(folder_id, []))
+        seen = {folder_id}
+        while pending:
+            child_id = pending.pop()
+            if child_id in seen:
+                continue
+            seen.add(child_id)
+            descendants.append(child_id)
+            pending.extend(children.get(child_id, []))
+        return descendants
+
+    def move_folder(self, folder_id, parent_id=None):
+        if not self.get_folder(folder_id):
+            raise ValueError("Thư mục không tồn tại")
+        if parent_id:
+            if not self.get_folder(parent_id):
+                raise ValueError("Thư mục cha không tồn tại")
+            if parent_id == folder_id or parent_id in self.get_descendant_folder_ids(folder_id):
+                raise ValueError("Không thể chuyển thư mục vào chính nó hoặc thư mục con")
+        self.db.execute_query(
+            "UPDATE folders SET parent_id = ? WHERE id = ?",
+            (parent_id or None, folder_id),
+        )
 
     def move_note_to_folder(self, note_id, folder_id):
         """Cập nhật folder_id của Note. Nếu folder_id=None nghĩa là đưa ra ngoài thư mục gốc."""
@@ -139,6 +177,20 @@ class NoteRepository:
         )
 
         self.db.execute_query(query, params)
+
+    def update_note_content(self, note_id, content):
+        """Persist migrated media paths without changing the note timestamp."""
+        self.db.execute_query(
+            "UPDATE notes SET content = ? WHERE id = ?",
+            (self._normalize_content(content), note_id),
+        )
+
+    def update_note_media_path(self, note_id, media_path):
+        """Persist an absolute migrated path without changing updated_at."""
+        self.db.execute_query(
+            "UPDATE notes SET media_path = ? WHERE id = ?",
+            (media_path, note_id),
+        )
 
     def update_note_security(self, note_id, is_locked, password_hash=None, password_salt=None):
         query = '''
@@ -225,17 +277,30 @@ class NoteRepository:
 
     def purge_expired_deleted_notes(self, days=30):
         cutoff = (datetime.datetime.now() - datetime.timedelta(days=days)).replace(microsecond=0).isoformat()
-        query = '''
+        select_query = '''
+            SELECT id FROM notes
+            WHERE deleted_at IS NOT NULL
+              AND deleted_at != ''
+              AND deleted_at <= ?
+        '''
+        expired_ids = [row["id"] for row in self.db.fetch_all(select_query, (cutoff,))]
+        delete_query = '''
             DELETE FROM notes
             WHERE deleted_at IS NOT NULL
               AND deleted_at != ''
               AND deleted_at <= ?
         '''
-        self.db.execute_query(query, (cutoff,))
+        self.db.execute_query(delete_query, (cutoff,))
+        return expired_ids
 
     def delete_folder(self, folder_id):
-        """Xóa thư mục và đưa toàn bộ ghi chú bên trong ra thư mục gốc."""
-        query_update_notes = "UPDATE notes SET folder_id = NULL WHERE folder_id = ?"
-        self.db.execute_query(query_update_notes, (folder_id,))
-        query_delete_folder = "DELETE FROM folders WHERE id = ?"
-        self.db.execute_query(query_delete_folder, (folder_id,))
+        """Delete one folder, preserving children by moving them one level up."""
+        folder = self.get_folder(folder_id)
+        if not folder:
+            return
+        parent_id = folder["parent_id"]
+        self.db.execute_transaction([
+            ("UPDATE notes SET folder_id = NULL WHERE folder_id = ?", (folder_id,)),
+            ("UPDATE folders SET parent_id = ? WHERE parent_id = ?", (parent_id, folder_id)),
+            ("DELETE FROM folders WHERE id = ?", (folder_id,)),
+        ])
