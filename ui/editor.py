@@ -197,7 +197,6 @@ class EditorFrame(ctk.CTkFrame):
         self.document_zoom_slider.set(100)
         self.document_zoom_slider.grid(row=0, column=7, padx=(0, 8), sticky="w")
         self.document_zoom_slider.bind("<ButtonRelease-1>", self.on_zoom_release)
-        self.document_zoom_slider.configure(command=self._queue_zoom)
 
         # --- Primary Title Header ---
         self.entry_title = ctk.CTkEntry(
@@ -596,23 +595,39 @@ class EditorFrame(ctk.CTkFrame):
         if tag_name in self._font_cache_initialized:
             font = self._font_cache.get(tag_name)
             if font:
-                new_size = int(normalized["size"] * zoom_mult)
+                new_size = max(1, int(normalized["size"] * zoom_mult))
                 if int(font.cget("size")) != new_size:
                     font.configure(size=new_size)
             return
 
-        font = tkfont.Font(
-            family=normalized["family"],
-            size=int(normalized["size"] * zoom_mult),
-            weight="bold" if normalized["bold"] else "normal",
-            slant="italic" if normalized["italic"] else "roman",
-            underline=normalized["underline"]
+        font_key = (
+            normalized["family"],
+            normalized["size"],
+            normalized["bold"],
+            normalized["italic"],
+            normalized["underline"]
         )
+
+        if not hasattr(self, "_shared_fonts"):
+            self._shared_fonts = {}
+
+        if font_key in self._shared_fonts:
+            font = self._shared_fonts[font_key]
+        else:
+            font = tkfont.Font(
+                family=normalized["family"],
+                size=max(1, int(normalized["size"] * zoom_mult)),
+                weight="bold" if normalized["bold"] else "normal",
+                slant="italic" if normalized["italic"] else "roman",
+                underline=normalized["underline"]
+            )
+            self._shared_fonts[font_key] = font
         kwargs = {"font": font}
         if normalized["foreground"]:
             kwargs["foreground"] = normalized["foreground"]
         if normalized["highlight"]:
             kwargs["background"] = normalized["highlight"]
+            
         self._font_cache[tag_name] = font
         self._font_base_sizes[tag_name] = normalized["size"]
         self._font_cache_initialized.add(tag_name)
@@ -790,23 +805,30 @@ class EditorFrame(ctk.CTkFrame):
         zoom_factor = max(0.5, min(2.0, float(value) / 100.0))
         if abs(zoom_factor - self.zoom_factor) < 0.0001:
             return
-
         widget = self._text_widget()
         cursor_pos = widget.index("insert")
         yview = widget.yview()
         self.zoom_factor = zoom_factor
-
+        self.textbox_content.grid_remove()
+        self.update_idletasks() 
         new_base_size = self._scaled_font_size(self._base_style["size"], zoom_factor)
         if int(self._text_font.cget("size")) != new_base_size:
             self._text_font.configure(size=new_base_size)
-
-        for tag_name, font in list(self._font_cache.items()):
-            base_size = self._font_base_sizes.get(tag_name)
-            if base_size is not None:
+        if hasattr(self, "_shared_fonts"):
+            for font_key, font in list(self._shared_fonts.items()):
+                base_size = font_key[1] 
                 new_size = self._scaled_font_size(base_size, zoom_factor)
-                if int(font.cget("size")) == new_size:
-                    continue
-                font.configure(size=new_size)
+                if int(font.cget("size")) != new_size:
+                    font.configure(size=new_size)
+        else:
+            for tag_name, font in list(self._font_cache.items()):
+                base_size = self._font_base_sizes.get(tag_name)
+                if base_size is not None:
+                    new_size = self._scaled_font_size(base_size, zoom_factor)
+                    if int(font.cget("size")) == new_size:
+                        continue
+                    font.configure(size=new_size)
+        self.textbox_content.grid(row=0, column=0, sticky="nsew")
 
         if self._zoom_restore_after_id is not None:
             self.after_cancel(self._zoom_restore_after_id)
@@ -839,11 +861,19 @@ class EditorFrame(ctk.CTkFrame):
         self._apply_style_tag_to_range(start, end, style)
 
     def _clear_font_cache(self):
-        for font in self._font_cache.values():
-            try:
-                font.destroy()
-            except Exception:
-                pass
+        if hasattr(self, "_shared_fonts"):
+            for font in self._shared_fonts.values():
+                try:
+                    font.destroy()
+                except Exception:
+                    pass
+            self._shared_fonts.clear()
+        else:
+            for font in self._font_cache.values():
+                try:
+                    font.destroy()
+                except Exception:
+                    pass 
         self._font_cache.clear()
         self._font_base_sizes.clear()
         self._font_cache_initialized.clear()
